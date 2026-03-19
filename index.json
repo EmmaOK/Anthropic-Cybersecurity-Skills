@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-03-19T12:56:06Z",
+  "generated_at": "2026-03-19T12:56:46Z",
   "repository": "https://github.com/mukul975/Anthropic-Cybersecurity-Skills",
   "total_skills": 724,
   "total_domains": 1,
@@ -8602,7 +8602,7 @@
     },
     {
       "name": "implementing-security-monitoring-with-datadog",
-      "description": "Implement security monitoring using Datadog's Cloud SIEM, log analysis, and threat detection capabilities to identify and respond to security events across cloud infrastructure.",
+      "description": ">",
       "domain": "cybersecurity",
       "subdomain": "security-operations",
       "tags": [
@@ -8610,9 +8610,12 @@
         "monitoring",
         "datadog",
         "cloud-security",
-        "log-analysis"
+        "log-analysis",
+        "detection-rules",
+        "CSM",
+        "workload-protection"
       ],
-      "version": "1.0",
+      "version": "1.0.0",
       "author": "mukul975",
       "license": "Apache-2.0",
       "path": "skills/implementing-security-monitoring-with-datadog"
