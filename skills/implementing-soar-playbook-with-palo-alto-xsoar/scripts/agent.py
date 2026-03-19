@@ -35,9 +35,11 @@ def xsoar_api(server, api_key, endpoint, method="POST", data=None):
     headers = {"Authorization": api_key, "Content-Type": "application/json",
                "Accept": "application/json"}
     if method == "GET":
-        resp = requests.get(url, headers=headers, verify=False, timeout=30)
+        resp = requests.get(url, headers=headers,
+                            verify=not os.environ.get("SKIP_TLS_VERIFY", "").lower() == "true", timeout=30)  # Set SKIP_TLS_VERIFY=true for self-signed certs in lab environments
     else:
-        resp = requests.post(url, headers=headers, json=data or {}, verify=False, timeout=30)
+        resp = requests.post(url, headers=headers, json=data or {},
+                             verify=not os.environ.get("SKIP_TLS_VERIFY", "").lower() == "true", timeout=30)  # Set SKIP_TLS_VERIFY=true for self-signed certs in lab environments
     resp.raise_for_status()
     return resp.json()
 
