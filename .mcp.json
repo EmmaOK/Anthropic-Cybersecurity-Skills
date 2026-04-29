@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "phantom-skills": {
+      "command": "python3",
+      "args": ["mcp/phantom_mcp_server.py"]
+    }
+  }
+}
