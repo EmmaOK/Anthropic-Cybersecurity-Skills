@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Phantom — Adaptive Cybersecurity AI Agent
-Powered by Claude API + 754-skill cybersecurity library
+Powered by Claude API + 796-skill cybersecurity library
 
 Usage:
     python phantom/main.py
@@ -11,7 +11,7 @@ Requirements:
     export ANTHROPIC_API_KEY=sk-...
 
 Slash commands:
-    /mode <name>     Switch persona (red-team, appsec, threat-hunting, cloud, forensics, soc, general)
+    /mode <name>     Switch persona (red-team, appsec, threat-hunting, cloud, forensics, soc, ai-security, general)
     /modes           List all available modes
     /save [name]     Save current session
     /load <name>     Load a saved session
@@ -50,7 +50,7 @@ MODEL = "claude-opus-4-6"
 MAX_TOKENS = 4096
 
 _BASE = (
-    "You have access to a curated library of 754 cybersecurity skills mapped to "
+    "You have access to a curated library of 796 cybersecurity skills mapped to "
     "MITRE ATT&CK, NIST CSF 2.0, MITRE ATLAS, D3FEND, and NIST AI RMF. "
     "When a user asks about a security task: "
     "(1) use search_skills to find relevant procedures, "
@@ -105,6 +105,23 @@ PERSONAS: dict[str, str] = {
         f"SIEM rule tuning, escalation workflows, and threat intelligence enrichment. "
         f"Prioritize speed and clarity for analysts under pressure. {_BASE}"
     ),
+    "ai-security": (
+        f"You are Phantom in AI Security mode. "
+        f"You are an expert in securing AI systems, LLMs, agentic pipelines, and MCP infrastructure. "
+        f"Your knowledge covers all four AI security frameworks in the library: "
+        f"OWASP LLM Top 10 2025 (LLM01–LLM10), OWASP MCP Top 10 v0.1 (MCP01–MCP10), "
+        f"OWASP Top 10 for Agentic Applications 2026 (ASI01–ASI10), and the MAESTRO 7-layer framework. "
+        f"When a user describes an AI system, proactively identify which threat categories apply "
+        f"and which skills are most relevant. "
+        f"For audit and remediation tasks, always suggest running the appropriate executable script "
+        f"(RAG pipeline audit, model extraction defense, infra hardening, eval/telemetry audit, "
+        f"governance compliance, MAESTRO threat model). "
+        f"Frame risks in terms of concrete attacker scenarios: prompt injection, goal hijacking, "
+        f"model extraction, supply chain compromise, rogue agents, cascading failures. "
+        f"Reference MITRE ATLAS techniques and NIST AI RMF functions when explaining controls. "
+        f"This mode is for AI/ML engineers, AI red teamers, and security architects building or "
+        f"auditing AI-powered systems. {_BASE}"
+    ),
 }
 
 BANNER = """
@@ -115,13 +132,13 @@ BANNER = """
  ██║     ██║  ██║██║  ██║██║ ╚████║   ██║   ╚██████╔╝██║ ╚═╝ ██║
  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
 
- Adaptive Cybersecurity AI  |  754 Skills  |  7 Modes  |  Claude-Opus-4-6
+ Adaptive Cybersecurity AI  |  796 Skills  |  8 Modes  |  Claude-Opus-4-6
  Type /modes to list modes, /help for all commands, exit to quit.
 """
 
 HELP_TEXT = """
 Commands:
-  /mode <name>     Switch persona — e.g. /mode appsec
+  /mode <name>     Switch persona — e.g. /mode ai-security
   /modes           List all available modes
   /save [name]     Save session — e.g. /save lab-recon
   /load <name>     Load a session — e.g. /load lab-recon
