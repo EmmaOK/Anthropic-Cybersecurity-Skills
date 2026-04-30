@@ -19,8 +19,10 @@ Slash commands:
     exit / quit      Auto-save and exit
 """
 
+import base64
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +51,14 @@ SESSIONS_DIR = Path(__file__).parent / "sessions"
 MODEL = "claude-opus-4-6"
 MAX_TOKENS = 4096
 
+SUPPORTED_IMAGE_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
 _BASE = (
     "You have access to a curated library of 796 cybersecurity skills mapped to "
     "MITRE ATT&CK, NIST CSF 2.0, MITRE ATLAS, D3FEND, and NIST AI RMF. "
@@ -58,6 +68,11 @@ _BASE = (
     "(3) walk the user through each step clearly. "
     "Only call run_skill_agent when the user explicitly asks to execute a script. "
     "Only call write_file when the user asks to save or write output to a file. "
+    "When the user shares an image (network diagram, architecture diagram, screenshot, topology), "
+    "analyse it thoroughly before responding: identify components, trust boundaries, exposed services, "
+    "lateral movement paths, and misconfigurations, then map findings to relevant skills or ATT&CK techniques. "
+    "Use generate_diagram whenever the user asks for a visual diagram, map, attack path, threat tree, "
+    "or architecture chart — always produce valid Mermaid syntax. "
     "You are concise, technically precise, and treat the user as a capable security professional. "
     "This assistant is for authorized lab environments and personal learning only."
 )
@@ -133,17 +148,27 @@ BANNER = """
  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
 
  Adaptive Cybersecurity AI  |  796 Skills  |  8 Modes  |  Claude-Opus-4-6
+ Image analysis: /attach <file>   Diagram generation: ask naturally
  Type /modes to list modes, /help for all commands, exit to quit.
 """
 
 HELP_TEXT = """
 Commands:
-  /mode <name>     Switch persona — e.g. /mode ai-security
-  /modes           List all available modes
-  /save [name]     Save session — e.g. /save lab-recon
-  /load <name>     Load a session — e.g. /load lab-recon
-  /sessions        List all saved sessions
-  exit / quit      Auto-save and exit
+  /mode <name>       Switch persona — e.g. /mode ai-security
+  /modes             List all available modes
+  /attach <path>     Attach an image (PNG/JPG/GIF/WEBP) to your next message
+                     e.g. /attach ~/Desktop/network.png
+                     then: "analyse this for lateral movement paths"
+  /save [name]       Save session — e.g. /save lab-recon
+  /load <name>       Load a session — e.g. /load lab-recon
+  /sessions          List all saved sessions
+  exit / quit        Auto-save and exit
+
+Diagram generation:
+  Ask naturally — "draw a network diagram", "generate an attack path",
+  "create a threat tree for this system". Diagrams are saved as .mmd
+  (Mermaid source) under diagrams/. Install mmdc for PNG rendering:
+    npm install -g @mermaid-js/mermaid-cli
 """
 
 
@@ -268,6 +293,47 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
         print(f"\n[Phantom] File written: {target}")
         return f"File successfully written to: {target}"
 
+    elif tool_name == "generate_diagram":
+        title = tool_input.get("title", "diagram")
+        mermaid_source = tool_input.get("mermaid_source", "")
+        output_path = tool_input.get("output_path", f"diagrams/{title.lower().replace(' ', '_')}")
+
+        target = ROOT / output_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        mmd_path = target.with_suffix(".mmd")
+        mmd_path.write_text(mermaid_source, encoding="utf-8")
+        print(f"\n[Phantom] Diagram saved: {mmd_path}")
+
+        png_path = target.with_suffix(".png")
+        try:
+            result = subprocess.run(
+                ["mmdc", "-i", str(mmd_path), "-o", str(png_path), "--quiet"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                print(f"[Phantom] PNG rendered:  {png_path}")
+                return (
+                    f"Diagram '{title}' saved.\n"
+                    f"  Mermaid source : {mmd_path}\n"
+                    f"  PNG            : {png_path}"
+                )
+            else:
+                stderr = result.stderr.strip()
+                return (
+                    f"Mermaid source saved to {mmd_path}.\n"
+                    f"PNG rendering failed: {stderr or 'mmdc error'}.\n"
+                    f"To render manually: mmdc -i {mmd_path} -o {png_path}"
+                )
+        except FileNotFoundError:
+            return (
+                f"Mermaid source saved to {mmd_path}.\n"
+                f"mmdc not found — install with: npm install -g @mermaid-js/mermaid-cli\n"
+                f"Then render: mmdc -i {mmd_path} -o {png_path}"
+            )
+        except subprocess.TimeoutExpired:
+            return f"Mermaid source saved to {mmd_path}. PNG render timed out."
+
     return f"[Error] Unknown tool: {tool_name}"
 
 
@@ -319,10 +385,10 @@ def run_turn(client: anthropic.Anthropic, messages: list, system_prompt: str) ->
 # ---------------------------------------------------------------------------
 
 def handle_slash_command(
-    cmd: str, messages: list, current_mode: str
-) -> tuple[list, str, bool]:
+    cmd: str, messages: list, current_mode: str, pending_image: dict | None
+) -> tuple[list, str, bool, dict | None]:
     """
-    Process a slash command. Returns (messages, current_mode, handled).
+    Process a slash command. Returns (messages, current_mode, handled, pending_image).
     `handled=True` means the input was a command and should not be sent to Claude.
     """
     parts = cmd.strip().split(maxsplit=1)
@@ -334,7 +400,7 @@ def handle_slash_command(
         for name in PERSONAS:
             marker = " *" if name == current_mode else ""
             print(f"  {name}{marker}")
-        return messages, current_mode, True
+        return messages, current_mode, True, pending_image
 
     if command == "/mode":
         if not arg:
@@ -344,13 +410,30 @@ def handle_slash_command(
         else:
             current_mode = arg
             print(f"[Phantom] Switched to {current_mode} mode.")
-        return messages, current_mode, True
+        return messages, current_mode, True, pending_image
+
+    if command == "/attach":
+        if not arg:
+            print("[Phantom] Usage: /attach <image_path>  (PNG, JPG, GIF, or WEBP)")
+            return messages, current_mode, True, pending_image
+        img_path = Path(arg).expanduser().resolve()
+        if not img_path.exists():
+            print(f"[Phantom] File not found: {img_path}")
+            return messages, current_mode, True, pending_image
+        media_type = SUPPORTED_IMAGE_TYPES.get(img_path.suffix.lower())
+        if not media_type:
+            print(f"[Phantom] Unsupported type '{img_path.suffix}'. Supported: jpg, png, gif, webp")
+            return messages, current_mode, True, pending_image
+        data = base64.standard_b64encode(img_path.read_bytes()).decode("utf-8")
+        pending_image = {"media_type": media_type, "data": data, "filename": img_path.name}
+        print(f"[Phantom] Image attached: {img_path.name} ({media_type}). Now send your question.")
+        return messages, current_mode, True, pending_image
 
     if command == "/save":
         name = arg or None
         path = save_session(messages, current_mode, name)
         print(f"[Phantom] Session saved: {path}")
-        return messages, current_mode, True
+        return messages, current_mode, True, pending_image
 
     if command == "/load":
         if not arg:
@@ -362,7 +445,7 @@ def handle_slash_command(
             else:
                 messages, current_mode = result
                 print(f"[Phantom] Session '{arg}' loaded. Mode: {current_mode}. Messages: {len(messages)}")
-        return messages, current_mode, True
+        return messages, current_mode, True, pending_image
 
     if command == "/sessions":
         sessions = list_sessions()
@@ -372,15 +455,15 @@ def handle_slash_command(
             print(f"\nSaved sessions ({len(sessions)}):")
             for s in sessions:
                 print(f"  {s['name']:30s}  mode={s['mode']:15s}  msgs={s['messages']:3d}  {s['created_at'][:19]}")
-        return messages, current_mode, True
+        return messages, current_mode, True, pending_image
 
     if command == "/help":
         print(HELP_TEXT)
-        return messages, current_mode, True
+        return messages, current_mode, True, pending_image
 
     # Unknown slash command
     print(f"[Phantom] Unknown command '{command}'. Type /help for options.")
-    return messages, current_mode, True
+    return messages, current_mode, True, pending_image
 
 
 # ---------------------------------------------------------------------------
@@ -397,12 +480,14 @@ def main():
     client = anthropic.Anthropic(api_key=api_key)
     messages: list = []
     current_mode = "general"
+    pending_image: dict | None = None
 
     print(BANNER)
 
     while True:
+        prompt_suffix = " [+image]" if pending_image else ""
         try:
-            user_input = input(f"\nYou [{current_mode}]: ").strip()
+            user_input = input(f"\nYou [{current_mode}{prompt_suffix}]: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n\n[Phantom] Auto-saving session...")
             path = save_session(messages, current_mode)
@@ -423,10 +508,30 @@ def main():
 
         # Slash commands
         if user_input.startswith("/"):
-            messages, current_mode, _ = handle_slash_command(user_input, messages, current_mode)
+            messages, current_mode, _, pending_image = handle_slash_command(
+                user_input, messages, current_mode, pending_image
+            )
             continue
 
-        messages.append({"role": "user", "content": user_input})
+        # Build user content — include image block if one is pending
+        if pending_image:
+            content = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": pending_image["media_type"],
+                        "data": pending_image["data"],
+                    },
+                },
+                {"type": "text", "text": user_input},
+            ]
+            print(f"[Phantom] Sending image '{pending_image['filename']}' with your message.")
+            pending_image = None
+        else:
+            content = user_input
+
+        messages.append({"role": "user", "content": content})
 
         try:
             system_prompt = PERSONAS[current_mode]

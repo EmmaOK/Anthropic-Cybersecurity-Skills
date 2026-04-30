@@ -1,11 +1,12 @@
 """
 tools.py — Claude tool definitions for Phantom.
 
-Four tools:
+Six tools:
   - search_skills: keyword/technique search across the skill library
   - load_skill: load full SKILL.md content for a skill
   - run_skill_agent: execute a skill's agent.py script
   - write_file: write generated content to a file on disk
+  - generate_diagram: generate Mermaid diagram and optionally render to PNG
 """
 
 TOOLS = [
@@ -103,6 +104,53 @@ TOOLS = [
                 },
             },
             "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "generate_diagram",
+        "description": (
+            "Generate a diagram (network topology, attack path, data flow, threat model, "
+            "kill chain, architecture, sequence) as Mermaid syntax and save it to disk. "
+            "Use this when the user asks for a visual diagram, map, or chart of any kind. "
+            "After analyzing an attached image, use this to generate a corrected or annotated version. "
+            "The .mmd file is always saved; PNG is rendered automatically if mmdc is installed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Human-readable title for the diagram.",
+                },
+                "diagram_type": {
+                    "type": "string",
+                    "enum": [
+                        "flowchart", "sequence", "classDiagram", "stateDiagram",
+                        "erDiagram", "journey", "gantt", "mindmap", "timeline",
+                        "gitGraph", "xychart-beta",
+                    ],
+                    "description": (
+                        "Mermaid diagram type. Use 'flowchart' for network/architecture/attack-path "
+                        "diagrams. Use 'sequence' for protocol flows. Use 'mindmap' for threat trees."
+                    ),
+                },
+                "mermaid_source": {
+                    "type": "string",
+                    "description": (
+                        "Complete, valid Mermaid diagram source. Must start with the diagram type "
+                        "keyword (e.g. 'flowchart TD', 'sequenceDiagram', 'mindmap'). "
+                        "Include all nodes, edges, labels, and styling."
+                    ),
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": (
+                        "Output file path relative to project root, without extension. "
+                        "Examples: 'diagrams/network-topology', 'reports/attack-path-2026-04'"
+                    ),
+                },
+            },
+            "required": ["title", "mermaid_source", "output_path"],
         },
     },
 ]
