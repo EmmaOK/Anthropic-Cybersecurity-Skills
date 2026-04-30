@@ -2,6 +2,7 @@
 # For authorized penetration testing and lab environments only
 """Forced Browsing Authentication Bypass Agent - Tests for unprotected endpoints."""
 
+import os
 import json
 import logging
 import argparse
@@ -12,6 +13,8 @@ import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 
 DEFAULT_ADMIN_PATHS = [
     "/admin", "/administrator", "/admin-panel", "/wp-admin", "/cpanel",
@@ -37,13 +40,13 @@ def load_wordlist(wordlist_path):
 def test_endpoint(base_url, path, session_cookie=None, timeout=10):
     """Test a single endpoint with and without authentication."""
     url = urljoin(base_url, path)
-    unauth_resp = requests.get(url, timeout=timeout, allow_redirects=False, verify=False)
+    unauth_resp = requests.get(url, timeout=timeout, allow_redirects=False, verify=VERIFY_TLS)
 
     auth_resp = None
     if session_cookie:
         auth_resp = requests.get(
             url, cookies={"session": session_cookie},
-            timeout=timeout, allow_redirects=False, verify=False,
+            timeout=timeout, allow_redirects=False, verify=VERIFY_TLS,
         )
 
     result = {

@@ -4,6 +4,7 @@
 # It is the end user's responsibility to obey all applicable local, state and federal laws.
 """Web cache poisoning assessment agent using requests and subprocess."""
 
+import os
 import sys
 import json
 import time
@@ -18,6 +19,8 @@ except ImportError:
     sys.exit(1)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def generate_cache_buster():
     """Generate a unique cache buster parameter."""
     return "cb" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
@@ -26,7 +29,7 @@ def generate_cache_buster():
 def identify_cache_layer(target_url):
     """Identify caching infrastructure from response headers."""
     try:
-        resp = requests.get(target_url, timeout=10, verify=False)
+        resp = requests.get(target_url, timeout=10, verify=VERIFY_TLS)
     except RequestException as e:
         return {"error": str(e)}
     headers = dict(resp.headers)
@@ -63,7 +66,7 @@ def test_cache_hit_miss(target_url):
     results = []
     for i in range(3):
         try:
-            resp = requests.get(test_url, timeout=10, verify=False)
+            resp = requests.get(test_url, timeout=10, verify=VERIFY_TLS)
             results.append({
                 "request": i + 1,
                 "x_cache": resp.headers.get("X-Cache", ""),
@@ -100,10 +103,10 @@ def test_unkeyed_headers(target_url):
         try:
             resp = requests.get(
                 test_url, headers={header_name: header_value},
-                timeout=10, verify=False
+                timeout=10, verify=VERIFY_TLS
             )
             if header_value in resp.text:
-                poisoned_resp = requests.get(test_url, timeout=10, verify=False)
+                poisoned_resp = requests.get(test_url, timeout=10, verify=VERIFY_TLS)
                 cached_poison = header_value in poisoned_resp.text
                 findings.append({
                     "header": header_name,
@@ -129,7 +132,7 @@ def test_cache_key_normalization(target_url):
     ]
     for url, desc in variations:
         try:
-            resp = requests.get(url, timeout=10, verify=False)
+            resp = requests.get(url, timeout=10, verify=VERIFY_TLS)
             tests.append({
                 "variation": desc, "url": url,
                 "status": resp.status_code,
@@ -154,7 +157,7 @@ def test_cache_deception(target_url):
     for path in deception_paths:
         test_url = f"{target_url.rstrip('/')}{path}?{cb}=1"
         try:
-            resp = requests.get(test_url, timeout=10, verify=False)
+            resp = requests.get(test_url, timeout=10, verify=VERIFY_TLS)
             cache_status = resp.headers.get("X-Cache", resp.headers.get("CF-Cache-Status", ""))
             if "HIT" in cache_status.upper() or resp.headers.get("Age"):
                 findings.append({

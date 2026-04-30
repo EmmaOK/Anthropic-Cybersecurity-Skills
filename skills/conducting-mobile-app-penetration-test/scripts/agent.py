@@ -2,6 +2,7 @@
 # For authorized penetration testing and lab environments only
 """Mobile App Penetration Testing Agent - Tests Android/iOS apps for OWASP MASTG vulnerabilities."""
 
+import os
 import json
 import logging
 import argparse
@@ -14,6 +15,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def decompile_apk(apk_path, output_dir):
     """Decompile Android APK using apktool for static analysis."""
     cmd = ["apktool", "d", apk_path, "-o", output_dir, "-f"]
@@ -71,7 +74,7 @@ def check_android_manifest(manifest_path):
 def test_certificate_pinning(target_url):
     """Test if the app enforces certificate pinning via mitmproxy check."""
     try:
-        resp = requests.get(target_url, timeout=10, verify=False)
+        resp = requests.get(target_url, timeout=10, verify=VERIFY_TLS)
         return {
             "url": target_url,
             "status": resp.status_code,
@@ -112,13 +115,13 @@ def test_api_endpoints(base_url, endpoints, auth_token=None):
     for endpoint in endpoints:
         url = f"{base_url}{endpoint}"
         try:
-            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            resp = requests.get(url, headers=headers, timeout=10, verify=VERIFY_TLS)
             result = {
                 "endpoint": endpoint,
                 "status": resp.status_code,
                 "response_size": len(resp.content),
             }
-            no_auth_resp = requests.get(url, timeout=10, verify=False)
+            no_auth_resp = requests.get(url, timeout=10, verify=VERIFY_TLS)
             if no_auth_resp.status_code == 200 and resp.status_code == 200:
                 result["auth_bypass"] = True
                 result["severity"] = "Critical"

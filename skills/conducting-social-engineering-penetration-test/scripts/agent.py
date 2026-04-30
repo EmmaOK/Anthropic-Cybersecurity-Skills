@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Social engineering penetration test management agent using GoPhish API."""
 
+import os
 import json
 import sys
 import argparse
@@ -14,6 +15,8 @@ except ImportError:
     sys.exit(1)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 class GoPhishClient:
     """GoPhish API client for phishing campaign management."""
 
@@ -22,13 +25,13 @@ class GoPhishClient:
         self.headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     def _get(self, endpoint):
-        resp = requests.get(f"{self.base_url}/api/{endpoint}", headers=self.headers, verify=False, timeout=30)
+        resp = requests.get(f"{self.base_url}/api/{endpoint}", headers=self.headers, verify=VERIFY_TLS, timeout=30)
         resp.raise_for_status()
         return resp.json()
 
     def _post(self, endpoint, data):
         resp = requests.post(f"{self.base_url}/api/{endpoint}", headers=self.headers,
-                             json=data, verify=False, timeout=30)
+                             json=data, verify=VERIFY_TLS, timeout=30)
         resp.raise_for_status()
         return resp.json()
 

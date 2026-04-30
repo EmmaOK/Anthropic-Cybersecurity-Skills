@@ -4,6 +4,7 @@
 # For authorized penetration testing and lab environments only.
 """
 
+import os
 import json
 import logging
 import argparse
@@ -14,6 +15,8 @@ import requests
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
+
 HAVOC_DEFAULT_PORT = 40056
 
 
@@ -23,9 +26,9 @@ def havoc_api_request(teamserver, endpoint, token, method="GET", data=None):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
         if method == "GET":
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            resp = requests.get(url, headers=headers, timeout=15, verify=VERIFY_TLS)
         else:
-            resp = requests.post(url, headers=headers, json=data or {}, timeout=15, verify=False)
+            resp = requests.post(url, headers=headers, json=data or {}, timeout=15, verify=VERIFY_TLS)
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as e:

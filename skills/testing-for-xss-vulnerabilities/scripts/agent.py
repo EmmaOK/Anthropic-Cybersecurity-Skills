@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent for testing Cross-Site Scripting (XSS) vulnerabilities during authorized assessments."""
 
+import os
 import requests
 import json
 import argparse
@@ -9,6 +10,8 @@ from datetime import datetime
 from urllib.parse import urljoin, quote
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 
 XSS_PAYLOADS = {
     "html_body": [
@@ -67,13 +70,13 @@ def test_reflected_xss(base_url, params, token=None):
         url = urljoin(base_url, param_url)
         canary_url = url.replace("FUZZ", CANARY)
         try:
-            resp = requests.get(canary_url, headers=headers, timeout=10, verify=False)
+            resp = requests.get(canary_url, headers=headers, timeout=10, verify=VERIFY_TLS)
             if CANARY not in resp.text:
                 continue
             contexts = detect_reflection_context(resp.text, CANARY)
             print(f"  [+] Reflection found at {param_url} (contexts: {contexts})")
             char_test_url = url.replace("FUZZ", '<>"\'&/')
-            char_resp = requests.get(char_test_url, headers=headers, timeout=10, verify=False)
+            char_resp = requests.get(char_test_url, headers=headers, timeout=10, verify=VERIFY_TLS)
             unencoded = []
             for ch in ['<', '>', '"', "'", '/']:
                 if ch in char_resp.text and f"&{ch}" not in char_resp.text:
@@ -84,7 +87,7 @@ def test_reflected_xss(base_url, params, token=None):
                 for payload in payloads:
                     test_url = url.replace("FUZZ", quote(payload))
                     try:
-                        test_resp = requests.get(test_url, headers=headers, timeout=10, verify=False)
+                        test_resp = requests.get(test_url, headers=headers, timeout=10, verify=VERIFY_TLS)
                         if payload in test_resp.text or payload.lower() in test_resp.text.lower():
                             findings.append({
                                 "type": "REFLECTED_XSS", "url": param_url,
@@ -114,10 +117,10 @@ def test_stored_xss(base_url, submit_endpoint, display_endpoint, token, field="b
             tagged_payload = f"{marker}:{payload}"
             try:
                 resp = requests.post(submit_url, headers=headers,
-                                     json={field: tagged_payload}, timeout=10, verify=False)
+                                     json={field: tagged_payload}, timeout=10, verify=VERIFY_TLS)
                 if resp.status_code in (200, 201):
                     display_resp = requests.get(display_url, headers=headers,
-                                                timeout=10, verify=False)
+                                                timeout=10, verify=VERIFY_TLS)
                     if payload in display_resp.text:
                         findings.append({
                             "type": "STORED_XSS", "submit": submit_endpoint,
@@ -136,7 +139,7 @@ def check_csp_header(base_url):
     print(f"\n[*] Checking CSP header on {base_url}...")
     findings = []
     try:
-        resp = requests.get(base_url, timeout=10, verify=False)
+        resp = requests.get(base_url, timeout=10, verify=VERIFY_TLS)
         csp = resp.headers.get("Content-Security-Policy", "")
         xxp = resp.headers.get("X-XSS-Protection", "")
 

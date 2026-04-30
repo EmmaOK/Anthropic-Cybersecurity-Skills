@@ -164,16 +164,19 @@ class HarborSecurityAgent:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: agent.py <harbor_url> [--user admin] [--pass Harbor12345]")
+        print("Usage: agent.py <harbor_url> [--user admin] [--pass <password>]  (or set HARBOR_PASSWORD env var)")
         sys.exit(1)
 
     url = sys.argv[1]
     user = "admin"
-    password = "Harbor12345"
+    password = os.environ.get("HARBOR_PASSWORD", "")
     if "--user" in sys.argv:
         user = sys.argv[sys.argv.index("--user") + 1]
     if "--pass" in sys.argv:
         password = sys.argv[sys.argv.index("--pass") + 1]
+    if not password:
+        print("[error] Harbor password required: set HARBOR_PASSWORD env var or pass --pass", file=sys.stderr)
+        sys.exit(1)
 
     agent = HarborSecurityAgent(url, user, password)
     agent.generate_report()

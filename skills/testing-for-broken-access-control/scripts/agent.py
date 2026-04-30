@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent for testing broken access control vulnerabilities during authorized assessments."""
 
+import os
 import requests
 import json
 import argparse
@@ -11,6 +12,8 @@ from urllib.parse import urljoin
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def test_vertical_escalation(base_url, user_token, admin_endpoints):
     """Test if a regular user can access admin endpoints."""
     print("\n[*] Testing vertical privilege escalation...")
@@ -21,7 +24,7 @@ def test_vertical_escalation(base_url, user_token, admin_endpoints):
         for method in methods:
             url = urljoin(base_url, endpoint)
             try:
-                resp = requests.request(method, url, headers=headers, timeout=10, verify=False)
+                resp = requests.request(method, url, headers=headers, timeout=10, verify=VERIFY_TLS)
                 if resp.status_code in (200, 201, 204):
                     findings.append({
                         "type": "VERTICAL_ESCALATION", "method": method,
@@ -43,7 +46,7 @@ def test_horizontal_escalation(base_url, user_token, resource_templates, other_u
         for uid in other_user_ids:
             url = urljoin(base_url, template.replace("{id}", str(uid)))
             try:
-                resp = requests.get(url, headers=headers, timeout=10, verify=False)
+                resp = requests.get(url, headers=headers, timeout=10, verify=VERIFY_TLS)
                 if resp.status_code == 200 and len(resp.text) > 50:
                     findings.append({
                         "type": "HORIZONTAL_ESCALATION", "url": url,
@@ -68,7 +71,7 @@ def test_method_override(base_url, user_token, endpoint):
         for method in ["DELETE", "PUT", "PATCH"]:
             test_headers = {**headers, oh: method}
             try:
-                resp = requests.post(url, headers=test_headers, timeout=10, verify=False)
+                resp = requests.post(url, headers=test_headers, timeout=10, verify=VERIFY_TLS)
                 if resp.status_code in (200, 201, 204):
                     findings.append({
                         "type": "METHOD_OVERRIDE_BYPASS", "url": url,
@@ -88,7 +91,7 @@ def test_unauthenticated_access(base_url, protected_endpoints):
     for endpoint in protected_endpoints:
         url = urljoin(base_url, endpoint)
         try:
-            resp = requests.get(url, timeout=10, verify=False)
+            resp = requests.get(url, timeout=10, verify=VERIFY_TLS)
             if resp.status_code == 200 and len(resp.text) > 50:
                 findings.append({
                     "type": "UNAUTHENTICATED_ACCESS", "url": url,
@@ -113,7 +116,7 @@ def test_mass_assignment(base_url, user_token, profile_endpoint):
     ]
     for payload in payloads:
         try:
-            resp = requests.put(url, headers=headers, json=payload, timeout=10, verify=False)
+            resp = requests.put(url, headers=headers, json=payload, timeout=10, verify=VERIFY_TLS)
             if resp.status_code in (200, 201):
                 field = list(payload.keys())[0]
                 resp_text = resp.text.lower()
@@ -136,7 +139,7 @@ def test_tenant_isolation(base_url, tenant_a_token, tenant_b_resources):
     for resource in tenant_b_resources:
         url = urljoin(base_url, resource)
         try:
-            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            resp = requests.get(url, headers=headers, timeout=10, verify=VERIFY_TLS)
             if resp.status_code == 200 and len(resp.text) > 50:
                 findings.append({
                     "type": "TENANT_ISOLATION_BREACH", "url": url,

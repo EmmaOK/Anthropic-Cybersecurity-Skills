@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent for testing sensitive data exposure vulnerabilities during authorized assessments."""
 
+import os
 import requests
 import re
 import json
@@ -10,6 +11,8 @@ from datetime import datetime
 from urllib.parse import urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 
 SECRET_PATTERNS = {
     "AWS Access Key": r"AKIA[0-9A-Z]{16}",
@@ -34,7 +37,7 @@ def scan_javascript_files(base_url):
     print("\n[*] Scanning JavaScript files for secrets...")
     findings = []
     try:
-        resp = requests.get(base_url, timeout=15, verify=False)
+        resp = requests.get(base_url, timeout=15, verify=VERIFY_TLS)
         js_urls = re.findall(r'src=["\']([^"\']*\.js[^"\']*)["\']', resp.text)
         for js_path in js_urls[:20]:
             if js_path.startswith("//"):
@@ -46,7 +49,7 @@ def scan_javascript_files(base_url):
             else:
                 js_url = urljoin(base_url, js_path)
             try:
-                js_resp = requests.get(js_url, timeout=15, verify=False)
+                js_resp = requests.get(js_url, timeout=15, verify=VERIFY_TLS)
                 for name, pattern in SECRET_PATTERNS.items():
                     matches = re.findall(pattern, js_resp.text)
                     if matches:
@@ -75,7 +78,7 @@ def check_config_files(base_url):
     for cf in config_files:
         url = urljoin(base_url, cf)
         try:
-            resp = requests.get(url, timeout=5, verify=False)
+            resp = requests.get(url, timeout=5, verify=VERIFY_TLS)
             if resp.status_code == 200 and len(resp.text) > 10:
                 content_type = resp.headers.get("Content-Type", "")
                 if "text/html" not in content_type or cf.endswith((".json", ".php")):
@@ -97,7 +100,7 @@ def check_api_data_exposure(base_url, token, endpoints):
     for endpoint in endpoints:
         url = urljoin(base_url, endpoint)
         try:
-            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            resp = requests.get(url, headers=headers, timeout=10, verify=VERIFY_TLS)
             if resp.status_code == 200:
                 data_str = resp.text.lower()
                 exposed = [f for f in SENSITIVE_FIELDS if f in data_str]
@@ -119,7 +122,7 @@ def check_security_headers(base_url, sensitive_endpoints):
     for endpoint in sensitive_endpoints:
         url = urljoin(base_url, endpoint)
         try:
-            resp = requests.get(url, timeout=10, verify=False)
+            resp = requests.get(url, timeout=10, verify=VERIFY_TLS)
             cache_control = resp.headers.get("Cache-Control", "")
             if "no-store" not in cache_control and resp.status_code == 200:
                 findings.append({
@@ -137,7 +140,7 @@ def check_tls_config(host):
     print(f"\n[*] Checking TLS on {host}...")
     findings = []
     try:
-        resp = requests.get(f"http://{host}/", timeout=5, allow_redirects=False, verify=False)
+        resp = requests.get(f"http://{host}/", timeout=5, allow_redirects=False, verify=VERIFY_TLS)
         if resp.status_code not in (301, 302, 307, 308):
             findings.append({
                 "type": "NO_HTTPS_REDIRECT", "host": host,
@@ -152,7 +155,7 @@ def check_tls_config(host):
         print(f"  [+] HTTP not accessible (HTTPS only)")
 
     try:
-        resp = requests.get(f"https://{host}/", timeout=5, verify=False)
+        resp = requests.get(f"https://{host}/", timeout=5, verify=VERIFY_TLS)
         hsts = resp.headers.get("Strict-Transport-Security", "")
         if not hsts:
             findings.append({"type": "MISSING_HSTS", "host": host, "severity": "MEDIUM"})

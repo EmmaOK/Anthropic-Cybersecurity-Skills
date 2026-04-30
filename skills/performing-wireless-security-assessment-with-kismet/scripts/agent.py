@@ -18,8 +18,10 @@ class KismetAssessmentAgent:
     """Uses Kismet REST API for wireless security assessment."""
 
     def __init__(self, kismet_url=None,
-                 api_key=None, username="kismet", password="kismet"):
+                 api_key=None, username=None, password=None):
         kismet_url = kismet_url or os.environ.get("KISMET_URL", "http://localhost:2501")
+        username = username or os.environ.get("KISMET_USERNAME", "kismet")
+        password = password or os.environ.get("KISMET_PASSWORD", "")
         self.base_url = kismet_url.rstrip("/")
         self.session = requests.Session()
         if api_key:

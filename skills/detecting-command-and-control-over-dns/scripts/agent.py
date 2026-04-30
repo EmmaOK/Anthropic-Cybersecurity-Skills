@@ -1065,8 +1065,9 @@ def main():
 
         if args.dga_model and os.path.exists(args.dga_model):
             print(f"[*] Loading DGA model from {args.dga_model}...")
+            # SECURITY: only load pickle files from trusted sources — pickle can execute arbitrary code
             with open(args.dga_model, "rb") as f:
-                saved = pickle.load(f)
+                saved = pickle.load(f)  # nosec B301 — model file must come from trusted build pipeline
             model = saved["model"]
             scaler = saved["scaler"]
         elif HAS_SKLEARN:

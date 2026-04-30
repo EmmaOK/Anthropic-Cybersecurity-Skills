@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent for XSS testing workflows complementing Burp Suite during authorized assessments."""
 
+import os
 import requests
 import re
 import json
@@ -10,6 +11,8 @@ from datetime import datetime
 from urllib.parse import urljoin, quote, urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 
 XSS_WORDLIST = [
     '<script>alert(document.domain)</script>',
@@ -33,7 +36,7 @@ def find_reflection_points(base_url, token=None):
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     reflections = []
     try:
-        resp = requests.get(base_url, headers=headers, timeout=15, verify=False)
+        resp = requests.get(base_url, headers=headers, timeout=15, verify=VERIFY_TLS)
         forms = re.findall(r'<form[^>]*action=["\']([^"\']*)["\'][^>]*>(.*?)</form>',
                            resp.text, re.DOTALL | re.IGNORECASE)
         for action, form_body in forms:
@@ -58,7 +61,7 @@ def test_character_encoding(url, param, token=None):
     test_string = '<>"\'&/`()'
     full_url = f"{url}?{param}={quote(test_string)}"
     try:
-        resp = requests.get(full_url, headers=headers, timeout=10, verify=False)
+        resp = requests.get(full_url, headers=headers, timeout=10, verify=VERIFY_TLS)
         unencoded = [ch for ch in test_string if ch in resp.text]
         return unencoded
     except requests.RequestException:
@@ -74,7 +77,7 @@ def fuzz_xss_payloads(base_url, param_url, param_name, token=None, payloads=None
     for payload in payloads:
         url = f"{urljoin(base_url, param_url)}?{param_name}={quote(payload)}"
         try:
-            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            resp = requests.get(url, headers=headers, timeout=10, verify=VERIFY_TLS)
             if payload in resp.text:
                 findings.append({
                     "type": "REFLECTED_XSS", "url": param_url, "param": param_name,
@@ -99,10 +102,10 @@ def test_stored_xss_endpoints(base_url, endpoints, token):
         for payload in test_payloads:
             try:
                 data = {ep.get("field", "body"): payload}
-                resp = requests.post(url, headers=headers, json=data, timeout=10, verify=False)
+                resp = requests.post(url, headers=headers, json=data, timeout=10, verify=VERIFY_TLS)
                 if resp.status_code in (200, 201):
                     display_url = urljoin(base_url, ep["display"])
-                    display_resp = requests.get(display_url, headers=headers, timeout=10, verify=False)
+                    display_resp = requests.get(display_url, headers=headers, timeout=10, verify=VERIFY_TLS)
                     if payload in display_resp.text:
                         findings.append({
                             "type": "STORED_XSS", "submit": ep["submit"],
@@ -121,7 +124,7 @@ def analyze_csp(base_url):
     print("\n[*] Analyzing CSP for bypass opportunities...")
     findings = []
     try:
-        resp = requests.get(base_url, timeout=10, verify=False)
+        resp = requests.get(base_url, timeout=10, verify=VERIFY_TLS)
         csp = resp.headers.get("Content-Security-Policy", "")
         if not csp:
             findings.append({"type": "NO_CSP", "detail": "No CSP header present", "severity": "MEDIUM"})

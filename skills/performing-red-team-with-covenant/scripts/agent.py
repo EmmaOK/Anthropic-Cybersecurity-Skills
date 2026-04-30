@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Agent for red team operations with Covenant C2 framework.
 
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
+
 Automates Covenant C2 operations through its REST API: listener
 management, launcher generation, grunt monitoring, and task
 execution for authorized adversary simulation engagements.
@@ -39,7 +41,7 @@ class CovenantC2Agent:
             resp = requests.post(
                 f"{self.base_url}/api/users/login",
                 json={"userName": username, "password": password},
-                verify=False, timeout=10,
+                verify=VERIFY_TLS, timeout=10,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -56,7 +58,7 @@ class CovenantC2Agent:
                 method, f"{self.base_url}/api{path}",
                 headers={"Authorization": f"Bearer {self.token}",
                           "Content-Type": "application/json"},
-                json=data, verify=False, timeout=15,
+                json=data, verify=VERIFY_TLS, timeout=15,
             )
             return resp
         except requests.RequestException:

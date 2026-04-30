@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent for testing business logic vulnerabilities during authorized assessments."""
 
+import os
 import requests
 import json
 import argparse
@@ -12,6 +13,8 @@ from urllib.parse import urljoin
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def test_price_manipulation(base_url, token, cart_endpoint="/api/cart/add"):
     """Test price and quantity manipulation in purchase flows."""
     print("\n[*] Testing price/quantity manipulation...")
@@ -27,7 +30,7 @@ def test_price_manipulation(base_url, token, cart_endpoint="/api/cart/add"):
     ]
     for tc in test_cases:
         try:
-            resp = requests.post(url, headers=headers, json=tc["payload"], timeout=10, verify=False)
+            resp = requests.post(url, headers=headers, json=tc["payload"], timeout=10, verify=VERIFY_TLS)
             if resp.status_code in (200, 201):
                 findings.append({
                     "type": "PRICE_MANIPULATION", "test": tc["name"],
@@ -55,7 +58,7 @@ def test_checkout_total_override(base_url, token, checkout_endpoint="/api/checko
     ]
     for payload in payloads:
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=10, verify=False)
+            resp = requests.post(url, headers=headers, json=payload, timeout=10, verify=VERIFY_TLS)
             if resp.status_code in (200, 201):
                 findings.append({
                     "type": "TOTAL_OVERRIDE", "payload": payload,
@@ -77,7 +80,7 @@ def test_coupon_reuse(base_url, token, coupon_endpoint="/api/cart/apply-coupon",
     for i in range(5):
         try:
             resp = requests.post(url, headers=headers, json={"coupon_code": code},
-                                 timeout=10, verify=False)
+                                 timeout=10, verify=VERIFY_TLS)
             if resp.status_code in (200, 201):
                 success_count += 1
         except requests.RequestException:
@@ -127,7 +130,7 @@ def test_race_condition(base_url, token, endpoint, payload, concurrent=10):
 
     def send_request():
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=10, verify=False)
+            resp = requests.post(url, headers=headers, json=payload, timeout=10, verify=VERIFY_TLS)
             results.append({"status": resp.status_code, "body": resp.text[:200]})
         except requests.RequestException:
             results.append({"status": 0, "body": "error"})
@@ -157,7 +160,7 @@ def test_self_referral(base_url, token, referral_endpoint="/api/referrals/invite
     url = urljoin(base_url, referral_endpoint)
     try:
         resp = requests.post(url, headers=headers, json={"referral_email": email},
-                             timeout=10, verify=False)
+                             timeout=10, verify=VERIFY_TLS)
         if resp.status_code in (200, 201):
             print(f"  [!] Self-referral accepted")
             return [{"type": "SELF_REFERRAL", "severity": "MEDIUM"}]

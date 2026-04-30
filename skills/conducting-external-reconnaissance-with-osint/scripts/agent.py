@@ -2,6 +2,7 @@
 # For authorized penetration testing and lab environments only
 """External Reconnaissance Agent - Maps organization attack surface using passive OSINT."""
 
+import os
 import json
 import logging
 import argparse
@@ -14,6 +15,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def enumerate_subdomains_crtsh(domain):
     """Discover subdomains via certificate transparency logs."""
     url = f"https://crt.sh/?q=%.{domain}&output=json"
@@ -101,7 +104,7 @@ def check_web_technologies(domain):
     """Identify web technologies via HTTP response headers."""
     technologies = {}
     try:
-        resp = requests.get(f"https://{domain}", timeout=10, allow_redirects=True, verify=False)
+        resp = requests.get(f"https://{domain}", timeout=10, allow_redirects=True, verify=VERIFY_TLS)
         headers = resp.headers
         tech_headers = {
             "Server": headers.get("Server", ""),

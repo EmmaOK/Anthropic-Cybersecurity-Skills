@@ -15,10 +15,12 @@ except ImportError:
     sys.exit(1)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def fingerprint_technology(target_url):
     """Identify technology stack from response headers and cookies."""
     try:
-        resp = requests.get(target_url, timeout=10, verify=False, allow_redirects=True)
+        resp = requests.get(target_url, timeout=10, verify=VERIFY_TLS, allow_redirects=True)
     except RequestException as e:
         return {"error": str(e)}
     headers = dict(resp.headers)
@@ -40,7 +42,7 @@ def fingerprint_technology(target_url):
 def check_security_headers(target_url):
     """Check for presence of security headers."""
     try:
-        resp = requests.get(target_url, timeout=10, verify=False)
+        resp = requests.get(target_url, timeout=10, verify=VERIFY_TLS)
     except RequestException as e:
         return {"error": str(e)}
     required_headers = {
@@ -69,7 +71,7 @@ def test_http_methods(target_url):
     results = []
     for method in dangerous:
         try:
-            resp = requests.request(method, target_url, timeout=5, verify=False)
+            resp = requests.request(method, target_url, timeout=5, verify=VERIFY_TLS)
             if resp.status_code not in (405, 501):
                 results.append({
                     "method": method, "status": resp.status_code,
@@ -78,7 +80,7 @@ def test_http_methods(target_url):
         except RequestException:
             pass
     try:
-        resp = requests.options(target_url, timeout=5, verify=False)
+        resp = requests.options(target_url, timeout=5, verify=VERIFY_TLS)
         allow = resp.headers.get("Allow", "")
         results.append({"method": "OPTIONS", "allow_header": allow})
     except RequestException:
@@ -98,7 +100,7 @@ def test_cors_config(target_url):
         try:
             resp = requests.get(
                 target_url, headers={"Origin": origin},
-                timeout=5, verify=False
+                timeout=5, verify=VERIFY_TLS
             )
             acao = resp.headers.get("Access-Control-Allow-Origin", "")
             acac = resp.headers.get("Access-Control-Allow-Credentials", "")
@@ -148,7 +150,7 @@ def test_sql_injection_basic(target_url, params):
         for payload in payloads:
             test_params = {param_name: payload}
             try:
-                resp = requests.get(target_url, params=test_params, timeout=10, verify=False)
+                resp = requests.get(target_url, params=test_params, timeout=10, verify=VERIFY_TLS)
                 body_lower = resp.text.lower()
                 for err in sql_errors:
                     if err in body_lower:
@@ -176,7 +178,7 @@ def test_xss_basic(target_url, params):
             try:
                 resp = requests.get(
                     target_url, params={param_name: payload},
-                    timeout=10, verify=False
+                    timeout=10, verify=VERIFY_TLS
                 )
                 if payload in resp.text:
                     findings.append({

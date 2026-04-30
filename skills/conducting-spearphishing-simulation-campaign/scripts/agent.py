@@ -4,6 +4,7 @@
 # It is the end user's responsibility to obey all applicable local, state and federal laws.
 """Spearphishing simulation campaign agent using GoPhish API."""
 
+import os
 import json
 import sys
 import argparse
@@ -17,6 +18,8 @@ except ImportError:
     sys.exit(1)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 class GoPhishCampaign:
     """GoPhish campaign manager for spearphishing simulations."""
 
@@ -26,7 +29,7 @@ class GoPhishCampaign:
 
     def _req(self, method, endpoint, data=None):
         resp = requests.request(method, f"{self.url}/api/{endpoint}",
-                                headers=self.headers, json=data, verify=False)
+                                headers=self.headers, json=data, verify=VERIFY_TLS)
         resp.raise_for_status()
         return resp.json()
 

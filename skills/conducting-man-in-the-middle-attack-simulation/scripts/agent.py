@@ -2,6 +2,7 @@
 # For authorized penetration testing and lab environments only
 """MITM Attack Simulation Agent - Tests network defenses against ARP spoofing and traffic interception."""
 
+import os
 import json
 import logging
 import argparse
@@ -14,6 +15,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 def get_mac(ip_address):
     """Resolve MAC address for an IP using ARP request."""
     arp_request = ARP(pdst=ip_address)
@@ -79,7 +82,7 @@ def check_hsts_enforcement(target_url):
     """Check if a target enforces HSTS headers."""
     import requests
     try:
-        resp = requests.get(target_url, timeout=10, verify=False)
+        resp = requests.get(target_url, timeout=10, verify=VERIFY_TLS)
         hsts = resp.headers.get("Strict-Transport-Security", "")
         return {
             "url": target_url,
