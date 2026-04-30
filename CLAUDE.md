@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**Display name: Cybersecurity Skills** (formerly Anthropic-Cybersecurity-Skills). The GitHub repo slug retains the original name; the project is independently maintained and not affiliated with Anthropic PBC.
+
 This is a library of 796 cybersecurity skills for AI agents, mapped to 5 industry frameworks:
 - **MITRE ATT&CK Enterprise** — offensive techniques (218 unique techniques, 100% of 14 tactics)
 - **NIST Cybersecurity Framework 2.0** — risk management functions/categories
@@ -21,6 +23,37 @@ The library includes full coverage of four AI/agentic security frameworks:
 - **MAESTRO Framework** (7 layers + cross-layer threats) — 6 skills covering all MAESTRO threat domains: `performing-maestro-threat-modeling`, `rag-pipeline-security-and-data-provenance`, `ai-model-extraction-and-reprogramming-defense`, `ai-evaluation-security-and-observability-hardening`, `ai-governance-and-regulatory-compliance`, `ai-workload-infrastructure-hardening`
 
 All 35 AI security skills use `subdomain: ai-security` (an accepted extension to the standard 26 subdomains).
+
+## MCP Servers
+
+Two MCP servers are registered in `.mcp.json` and load automatically in Claude Code.
+
+### phantom-skills
+Exposes the skill library to Claude Code as 4 tools: `search_skills`, `load_skill`, `run_skill_agent`, `list_subdomains`.
+```json
+{ "command": "python3", "args": ["mcp/phantom_mcp_server.py"] }
+```
+No extra dependencies — reads `index.json` at startup.
+
+**Known limitation:** `index.json` only stores `name/description/domain/path` per skill; `list_subdomains` and `search_skills` therefore return `subdomain: "unknown"` for all skills. To fix, the MCP server needs to parse SKILL.md frontmatter directly (not yet implemented).
+
+### cve-intel (mukul975/cve-mcp-server)
+27-tool MCP server for live CVE intelligence: NVD lookup, EPSS scores, CISA KEV catalog, PoC detection, Shodan exposure, ATT&CK technique mapping, and composite risk scoring.
+
+**Install:**
+```bash
+git clone https://github.com/mukul975/cve-mcp-server ~/Desktop/cve-mcp-server
+cd ~/Desktop/cve-mcp-server
+pip install -e .
+```
+
+**Registration in `.mcp.json`:**
+```json
+{ "command": "python3", "args": ["-m", "cve_mcp.server"] }
+```
+Run `python3 -m cve_mcp.server` from `~/Desktop/cve-mcp-server/` to verify startup. The server pre-fetches the CISA KEV catalog on boot and caches all API responses in SQLite (`~/.cache/cve_mcp/vuln_cache.db`).
+
+**Risk scoring formula:** EPSS 35% + KEV 30% + CVSS 20% + PoC 15%; ×1.5 multiplier when both KEV and PoC are present.
 
 ## Key Commands
 
@@ -64,9 +97,15 @@ Phantom can execute `scripts/agent.py` files directly via the `run_skill_agent` 
 **SOC / SIEM:**
 - `securonix-siem-operations` — `agent.py query --use-case brute-force|lateral-movement|data-exfiltration|insider-threat|cloud-abuse|ransomware` / `agent.py convert --spl "..."` / `agent.py triage --alert-type <type>` — SPOTTER query generation, SPL→SPOTTER conversion, triage checklists (no API key required)
 
-**Vulnerability management (AWS):**
-- `aws-inspector-findings-reporter` — `agent.py report --start-date 2026-03-01 --end-date 2026-03-31 --regions us-east-1,us-west-2 --kev` / `agent.py trends --current report_march.json --previous report_feb.json` — monthly Inspector v2 report with CISA KEV + EPSS enrichment, multi-region, trend comparison; exits 1 on CRITICAL (requires `pip install boto3`)
-- `aws-vulnerability-remediation-prioritization` — `agent.py prioritize --findings raw_findings.json --kev` — ranks Inspector findings by composite score (severity × EPSS × KEV multiplier × affected-resource count); splits backlog by team (EC2/ECR/Lambda); identifies high-leverage "patch one, fix many" actions (no API key required)
+**Vulnerability management (AWS — full autonomous pipeline):**
+
+Phantom can run the full VM pipeline end-to-end when given AWS credentials:
+
+1. **Collect** — `aws-inspector-findings-reporter`: `agent.py report --start-date 2026-03-01 --end-date 2026-03-31 --regions us-east-1,us-west-2 --kev` — pulls Inspector v2 findings, enriches with CISA KEV + EPSS, outputs `inspector_report.json`; exits 1 on CRITICAL (requires `pip install boto3`)
+2. **Enrich** — use `cve-intel` MCP tools (`search_cve`, `get_risk_score`, `check_kev_status`) to cross-reference each CVE-ID in the Inspector report for live EPSS/PoC/ATT&CK context
+3. **Prioritize** — `aws-vulnerability-remediation-prioritization`: `agent.py prioritize --findings inspector_report.json --kev` — composite score: `severity_weight × (1 + EPSS) × KEV_multiplier(3×) × log(affected_resources + 1)`; splits backlog by team (EC2/ECR/Lambda); surfaces "patch one, fix many" actions
+
+All three steps produce structured JSON, can be chained by Phantom autonomously, and the final prioritized list can be written to file via `write_file`.
 
 **API security (pre-existing):**
 - `conducting-api-security-testing`, `testing-api-authentication-weaknesses`, `testing-api-for-broken-object-level-authorization`, `performing-api-rate-limiting-bypass`, `exploiting-api-injection-vulnerabilities`, `detecting-api-enumeration-attacks`, `testing-api-security-with-owasp-top-10`
@@ -159,6 +198,42 @@ A standalone Claude API chatbot that loads skills dynamically:
 | `sync-marketplace-version.yml` | GitHub release published | Bumps plugin version in marketplace.json |
 
 All workflows use inline Python 3 on `ubuntu-latest` — no npm or Makefile.
+
+## Security Hardening (Applied April 2026)
+
+A static audit of all 773 `scripts/agent.py` files and 796 `SKILL.md` files was run and saved to `skill_security_audit.json` (1,496 findings: 51 CRITICAL, 220 HIGH, 25 MEDIUM, 1,200 LOW — many LOWs are false positives from detection-rule content).
+
+**Fixes applied to 36 scripts:**
+
+| Issue | Pattern fixed | Scripts affected |
+|---|---|---|
+| Hardcoded credentials | `password = "..."` → `os.environ.get("...")` | `securing-container-registry-with-harbor`, `exploiting-active-directory-with-bloodhound`, `performing-wireless-security-assessment-with-kismet` |
+| `requests` TLS bypass | `verify=False` → `verify=VERIFY_TLS` | 32 exploitation/pentest/recon scripts |
+| `pickle.load` | Added `# nosec B301` + trusted-source comment | `detecting-command-and-control-over-dns` |
+
+**VERIFY_TLS pattern** (applied to all affected scripts):
+```python
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
+# Usage: requests.get(url, verify=VERIFY_TLS)
+```
+Set `SKIP_TLS_VERIFY=1` only when testing against self-signed certs in lab environments.
+
+**Credential env vars per skill:**
+- `HARBOR_PASSWORD` — `securing-container-registry-with-harbor`
+- `NEO4J_PASSWORD` — `exploiting-active-directory-with-bloodhound` (falls back to `bloodhound`)
+- `KISMET_USERNAME` / `KISMET_PASSWORD` — `performing-wireless-security-assessment-with-kismet`
+
+## DVMCP Testing Reference
+
+Scripts for testing skills against [DVMCP (Damn Vulnerable MCP Server)](https://github.com/halencarjunior/dvmcp) challenges live in `examples/dvmcp/`:
+- `detect_challenge2.py` — implements `mcp-tool-poisoning-detection-and-defense` workflow against Challenge 2 (port 9002)
+- `mcp_command_injection_audit.py` — implements `mcp-command-injection-prevention` workflow: static regex scan + 8 live injection probes
+
+**Start DVMCP:** `docker compose up -d` from the DVMCP repo root (challenges on ports 9001–9010).
+
+**Challenge 2 vulnerabilities confirmed:**
+- Command injection via `\n` newline bypass: `split()[0]` treats newline as whitespace, so `"ls\nid"` passes the allowlist check while injecting `id` when `shell=True`
+- Path traversal via `startswith('/tmp/safe/')` without `Path.resolve()`: `/tmp/safe/../../etc/passwd` passes the check
 
 ## Adding a New Skill
 
