@@ -153,4 +153,45 @@ TOOLS = [
             "required": ["title", "mermaid_source", "output_path"],
         },
     },
+    {
+        "name": "request_approval",
+        "description": (
+            "Submit a proposed IR containment, eradication, or recovery action for human approval "
+            "before executing it. ALWAYS call this before any destructive or production-impacting action "
+            "(isolating EC2, revoking IAM roles, blocking IPs, terminating instances, restoring snapshots). "
+            "Returns an approval_id. The approver is notified via Google Chat and the /approvals page. "
+            "After calling this, tell the analyst the approval_id and wait for confirmation before proceeding."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string",
+                    "description": (
+                        "Type of action to approve. Examples: isolate_ec2, revoke_iam_role, "
+                        "block_ip, create_forensic_snapshot, terminate_instance, restore_snapshot"
+                    ),
+                },
+                "resources": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "AWS resource IDs, IPs, or ARNs affected by the action.",
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Why this action is necessary — specific evidence observed.",
+                },
+                "impact": {
+                    "type": "string",
+                    "description": "Business impact if the action is approved (e.g. 'prod-api worker offline').",
+                },
+                "impact_level": {
+                    "type": "string",
+                    "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+                    "description": "Severity of business impact.",
+                },
+            },
+            "required": ["action_type", "resources", "justification", "impact", "impact_level"],
+        },
+    },
 ]

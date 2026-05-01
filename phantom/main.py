@@ -361,7 +361,13 @@ def run_turn(client: anthropic.Anthropic, messages: list, system_prompt: str) ->
             return "\n".join(text_parts)
 
         if response.stop_reason == "tool_use":
-            messages.append({"role": "assistant", "content": response.content})
+            assistant_blocks = []
+            for b in response.content:
+                if b.type == "tool_use":
+                    assistant_blocks.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
+                else:
+                    assistant_blocks.append({"type": "text", "text": getattr(b, "text", str(b))})
+            messages.append({"role": "assistant", "content": assistant_blocks})
 
             tool_results = []
             for block in response.content:

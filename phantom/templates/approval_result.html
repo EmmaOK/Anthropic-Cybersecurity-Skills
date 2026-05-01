@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Approval {{ decision | title }}{% endblock %}
+{% block content %}
+<div class="result-page">
+  {% if decision == "approved" %}
+    <div class="result-icon">&#x2705;</div>
+    <h1 class="result-approved">Action Approved</h1>
+  {% else %}
+    <div class="result-icon">&#x274C;</div>
+    <h1 class="result-denied">Action Denied</h1>
+  {% endif %}
+  <div class="result-card">
+    <div class="card-field"><strong>Approval ID</strong> <span class="mono">{{ approval.id }}</span></div>
+    <div class="card-field"><strong>Action</strong> {{ approval.action_type }}</div>
+    <div class="card-field"><strong>Resources</strong> {{ approval.resources | join(', ') }}</div>
+    <div class="card-field"><strong>Decided by</strong> {{ approval.decided_by }}</div>
+    <div class="card-field"><strong>Time</strong> {{ approval.decided_at[:19].replace('T',' ') }} UTC</div>
+  </div>
+  <a href="/approvals" class="btn-back">View all approvals &rarr;</a>
+</div>
+{% endblock %}

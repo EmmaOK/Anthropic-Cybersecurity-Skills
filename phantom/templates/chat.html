@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Chat{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">MODE</div>
+      <select id="modeSelect" class="mode-select">
+        {% for m in modes %}
+        <option value="{{ m }}">{{ m }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="sidebar-section">
+      <button class="btn-new-chat" onclick="newChat()">+ New Chat</button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">SESSIONS</div>
+      <div id="sessionsList" class="sessions-list"></div>
+    </div>
+
+    <div class="sidebar-section sidebar-save">
+      <input id="sessionName" class="session-name-input" placeholder="Session name…" type="text"/>
+      <button class="btn-save" onclick="saveCurrentSession()">Save</button>
+    </div>
+  </aside>
+
+  <!-- Chat area -->
+  <div class="chat-area">
+    <div id="messages" class="messages"></div>
+
+    <div class="input-bar">
+      <div id="imagePreview" class="image-preview hidden">
+        <span id="imageFilename"></span>
+        <button class="clear-image" onclick="clearImage()">&#x2715;</button>
+      </div>
+      <div class="input-row">
+        <label class="attach-btn" title="Attach image">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+          <input type="file" id="imageFile" accept="image/png,image/jpeg,image/gif,image/webp"
+                 onchange="handleImageAttach(event)" hidden/>
+        </label>
+        <textarea id="messageInput" class="message-input" rows="1"
+                  placeholder="Ask Phantom anything… (Shift+Enter for newline)"
+                  onkeydown="handleKey(event)"></textarea>
+        <button class="send-btn" onclick="sendMessage()" id="sendBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js/lib/core.min.js"></script>
+<script src="/static/chat.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+  loadSessions();
+</script>
+{% endblock %}

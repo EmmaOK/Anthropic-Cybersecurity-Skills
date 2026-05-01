@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Phantom — {% block title %}Cybersecurity AI{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="topnav">
+    <span class="topnav-brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+      </svg>
+      PHANTOM
+    </span>
+    <div class="topnav-links">
+      <a href="/chat" class="{% if request.url.path == '/chat' %}active{% endif %}">Chat</a>
+      <a href="/approvals" class="{% if request.url.path == '/approvals' %}active{% endif %}">
+        Approvals
+        {% if pending_approvals > 0 %}
+          <span class="badge-danger">{{ pending_approvals }}</span>
+        {% endif %}
+      </a>
+    </div>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

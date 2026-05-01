@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Approvals{% endblock %}
+
+{% block content %}
+<div class="approvals-layout">
+  <div class="approvals-header">
+    <h1>IR Approvals</h1>
+    <span class="subtitle">Human-in-the-loop for containment &amp; eradication actions</span>
+  </div>
+
+  <!-- Pending -->
+  <section class="approvals-section">
+    <h2>Pending
+      {% if pending_count > 0 %}<span class="badge-danger">{{ pending_count }}</span>{% endif %}
+    </h2>
+    {% if not pending %}
+      <div class="empty-state">No pending approvals.</div>
+    {% else %}
+      <div class="approval-cards">
+        {% for a in pending %}
+        <div class="approval-card" id="card-{{ a.id }}">
+          <div class="card-header">
+            <span class="impact-badge impact-{{ a.impact_level|lower }}">{{ a.impact_level }}</span>
+            <span class="action-type">{{ a.action_type }}</span>
+            <span class="card-time">{{ a.requested_at[:19].replace('T',' ') }} UTC</span>
+          </div>
+          <div class="card-body">
+            <div class="card-field"><strong>Resources</strong> {{ a.resources | join(', ') }}</div>
+            <div class="card-field"><strong>Justification</strong> {{ a.justification }}</div>
+            <div class="card-field"><strong>Impact</strong> {{ a.impact }}</div>
+            <div class="card-field"><strong>Requested by</strong> {{ a.requested_by }}</div>
+            <div class="card-field expires"><strong>Expires</strong> {{ a.expires_at[:19].replace('T',' ') }} UTC</div>
+          </div>
+          <div class="card-actions">
+            <button class="btn-approve" onclick="decide('{{ a.id }}','approved')">&#x2705; Approve</button>
+            <button class="btn-deny"    onclick="decide('{{ a.id }}','denied')">&#x274C; Deny</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  <!-- Audit trail -->
+  <section class="approvals-section">
+    <h2>Audit Trail</h2>
+    {% if not history %}
+      <div class="empty-state">No completed approvals yet.</div>
+    {% else %}
+      <table class="audit-table">
+        <thead>
+          <tr><th>ID</th><th>Action</th><th>Resources</th><th>Status</th><th>Decided by</th><th>Time</th></tr>
+        </thead>
+        <tbody>
+          {% for a in history %}
+          <tr class="audit-row-{{ a.status }}">
+            <td class="mono">{{ a.id }}</td>
+            <td>{{ a.action_type }}</td>
+            <td>{{ a.resources | join(', ') }}</td>
+            <td><span class="status-badge status-{{ a.status }}">{{ a.status }}</span></td>
+            <td>{{ a.decided_by or '—' }}</td>
+            <td>{{ (a.decided_at or '')[:19].replace('T',' ') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/approvals.js"></script>
+{% endblock %}
