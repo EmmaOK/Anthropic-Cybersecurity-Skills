@@ -1,4 +1,5 @@
-.claude/
+.claude/*
+!.claude/commands/
 teams/
 node_modules/
 __pycache__/
