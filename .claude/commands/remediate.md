@@ -91,11 +91,21 @@ After applying all STRIDE fixes, run the project's test suite to verify no regre
 
 ## 4. Fix MAESTRO findings (skip if no AI/agentic signals were detected by `/threat`)
 
-For each MAESTRO finding, search the Phantom skill library for the matching control skill, load it, and apply its fix guidance to the codebase.
+For each MAESTRO finding, apply fix guidance per layer using the table below.
+
+**If the Phantom MCP server is connected** (`mcp__phantom-skills__search_skills` is available):
+```
+1. mcp__phantom-skills__search_skills("<query from table below>")
+2. mcp__phantom-skills__load_skill("<matched skill name>")
+3. Read the skill's Workflow section
+4. Apply each control it specifies to the relevant files in this project
+```
+
+**If the Phantom MCP server is not connected**: apply your built-in knowledge of each MAESTRO layer's controls directly using the "What to fix" column as your guide. The coverage is equivalent — Phantom provides structured step-by-step scripts, but the controls themselves are well-defined.
 
 ### Layer routing
 
-| MAESTRO Layer | Search query | What to fix |
+| MAESTRO Layer | Phantom search query | What to fix |
 |---|---|---|
 | L1 Foundation Models | `"model extraction defense"` / `"adversarial robustness"` | Rate limiting on model API, output perturbation, anomaly detection on inference patterns |
 | L2 Data Operations | `"RAG pipeline security"` / `"data provenance"` | Prompt injection filters on ingested documents, vector DB access controls, embedding integrity checks |
@@ -106,21 +116,15 @@ For each MAESTRO finding, search the Phantom skill library for the matching cont
 | L7 Agent Ecosystem | `"agent ecosystem security"` | Registry signing, cryptographic agent identity, mutual auth between agents |
 | Cross-layer | `"AI explainability formal verification"` | Per-decision explanations, runtime constraint checkers, reward hacking tests |
 
-### How to apply
-
-For each affected layer:
-```
-1. mcp__phantom-skills__search_skills("<query from table above>")
-2. mcp__phantom-skills__load_skill("<matched skill name>")
-3. Read the skill's Workflow section
-4. Apply each control it specifies to the relevant files in this project
-```
-
 ---
 
 ## 5. Fix OWASP LLM / Agentic / MCP findings (skip if no AI/agentic signals)
 
-Route each finding to its Phantom skill, load the fix guidance, and apply it.
+For each finding, use the "Fix focus" column to apply the fix directly. If the Phantom MCP server is connected, also run the corresponding search query to load deeper step-by-step guidance from the skill library — but the "Fix focus" column is sufficient to remediate without it.
+
+**If Phantom is connected:** `mcp__phantom-skills__search_skills("<query>")` → `mcp__phantom-skills__load_skill("<result>")` → follow its Workflow section.
+
+**If Phantom is not connected:** apply your built-in knowledge of each OWASP item using the "Fix focus" column as the control specification.
 
 ### OWASP LLM Top 10
 
@@ -154,13 +158,9 @@ Route each finding to its Phantom skill, load the fix guidance, and apply it.
 
 ### OWASP MCP Top 10
 
-For any MCP finding, search:
-```
-mcp__phantom-skills__search_skills("MCP <threat name>")
-```
-Example queries: `"MCP tool poisoning"`, `"MCP command injection"`, `"MCP authentication"`.
+**If Phantom is connected:** search `mcp__phantom-skills__search_skills("MCP <threat name>")` — e.g. `"MCP tool poisoning"`, `"MCP command injection"`, `"MCP authentication"` — load the matched skill and follow its fix guidance.
 
-Load the matched skill and follow its fix guidance for the MCP server/client code in this project.
+**If Phantom is not connected:** apply your built-in knowledge of MCP security controls (tool signature verification, input sanitization, auth enforcement, output filtering, audit logging) directly to the MCP server/client code in this project.
 
 ---
 
@@ -170,7 +170,7 @@ Load the matched skill and follow its fix guidance for the MCP server/client cod
 
 1. **Test suite** — run the project's existing tests (same commands as `/audit` Section 3)
 2. **Re-check critical patterns** — for any finding where you changed a security control, grep the codebase to confirm the vulnerable pattern no longer exists
-3. **Re-search Phantom** for any finding you were unsure about — load the skill and verify the fix matches what it recommends
+3. **Verify fix quality** — if Phantom is connected, re-search and load the relevant skill to confirm the fix matches its recommended controls; if not connected, verify against your built-in knowledge of the framework's control specification
 
 ### Closure report
 

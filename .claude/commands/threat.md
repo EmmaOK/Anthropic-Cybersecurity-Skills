@@ -181,7 +181,9 @@ Apply for any ML model training, inference serving, or adversarial ML scenarios.
 
 After applying the frameworks above, search the Phantom skill library for skills relevant to the specific components found in the codebase. This surfaces additional, more targeted threat analysis capabilities.
 
-Use the `mcp__phantom-skills__search_skills` tool with queries matching detected components. Examples:
+**If the Phantom MCP server is connected** (`mcp__phantom-skills__search_skills` is available as a tool):
+
+Use it with queries matching detected components. Examples:
 
 ```
 search_skills("RAG pipeline security")
@@ -195,6 +197,10 @@ search_skills("JWT attack")
 ```
 
 Load and apply any relevant skills found using `mcp__phantom-skills__load_skill`.
+
+**If the Phantom MCP server is not connected** (tool unavailable):
+
+Apply your built-in knowledge of the detected frameworks directly. For each component with AI/agentic signals, reason through the applicable MAESTRO layer controls and OWASP LLM/Agentic/MCP items from your training. The analysis is still complete — Phantom adds depth but is not required for coverage.
 
 ---
 
