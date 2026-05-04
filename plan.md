@@ -1,96 +1,175 @@
-# Phantom Org-Wide Distribution Plan
+# Phantom Deployment Plan
 
-## Context
+## What Phantom Is
 
-Developers across the organization work in their own separate repos (React, Python, Java, etc.).
-Phantom is a shared cybersecurity capability — not a tool developers need to clone or manage.
-The goal is to make `/audit`, `/threat`, and `/remediate` available in every developer's Claude Code
-session regardless of which project they are working in, with zero setup on their part.
-
----
-
-## Architecture
-
-### What this repo becomes
-
-A **backend service repo** maintained by the security team:
-- `mcp/phantom_mcp_server.py` is deployed as a central HTTP service
-- `.claude/commands/` is the source of truth for org-level slash commands
-- Developers never clone this repo or know it exists
-
-### What developers get automatically
-
-| Capability | How it reaches them |
-|---|---|
-| `/audit` slash command | Org-level command via Claude Code Enterprise admin console |
-| `/threat` slash command | Org-level command via Claude Code Enterprise admin console |
-| `/remediate` slash command | Org-level command via Claude Code Enterprise admin console |
-| `mcp__phantom-skills__*` tools | Centrally-hosted Phantom MCP server registered at org level |
-| `mcp__cve-intel__*` tools | Centrally-hosted cve-intel MCP server registered at org level |
-| Billing / API key | Managed by org enterprise account — no personal API key needed |
+Phantom is the org's shared cybersecurity capability built on top of a library of 802 security skills
+mapped to MITRE ATT&CK, NIST CSF, MITRE ATLAS, MITRE D3FEND, and NIST AI RMF. It serves every
+team — developers, architects, security engineers, product managers, and CI/CD pipelines — through
+three distinct deployment layers. No team needs to clone or manage this repo directly.
 
 ---
 
-## Infrastructure steps (security team actions)
+## The Three Deployment Layers
 
-### 1. Deploy Phantom MCP server as a central HTTP service
-- Host `mcp/phantom_mcp_server.py` on internal infrastructure (EC2, Cloud Run, internal Kubernetes, etc.)
-- Expose via HTTPS on an internal hostname (e.g., `https://phantom-mcp.internal`)
-- The server reads `index.json` at startup — keep this repo's `index.json` accessible to it (mount as volume or bake into image)
-- No extra Python dependencies beyond stdlib
-
-### 2. Deploy cve-intel MCP server centrally
-- Clone `https://github.com/mukul975/cve-mcp-server`
-- `pip install -e .` and run `python3 -m cve_mcp.server` as a service
-- Expose on internal hostname (e.g., `https://cve-intel-mcp.internal`)
-- SQLite cache (`~/.cache/cve_mcp/vuln_cache.db`) should persist across restarts (mount a volume)
-
-### 3. Register both MCP servers at org level in Claude Code Enterprise admin console
-- Type: `http`
-- URLs: internal hostnames from steps 1 and 2
-- Scope: organization-wide (all users, all projects)
-
-### 4. Register slash commands at org level
-- Upload `audit.md`, `threat.md`, `remediate.md` as org-level Claude Code commands
-- These become available to every developer in every project automatically
-
-### 5. Update `.mcp.json` in this repo
-Change from local process to remote HTTP for both servers:
-```json
-{
-  "mcpServers": {
-    "phantom-skills": {
-      "type": "http",
-      "url": "https://phantom-mcp.internal"
-    },
-    "cve-intel": {
-      "type": "http",
-      "url": "https://cve-intel-mcp.internal"
-    }
-  }
-}
 ```
-This keeps local development working for the security team using this repo directly.
+┌─────────────────────────────────────────────────────────────┐
+│                    Skill Library (this repo)                 │
+│          802 skills · index.json · agent.py scripts         │
+└──────────────┬───────────────────────────────────────────────┘
+               │ serves
+   ┌───────────┼──────────────────────────┐
+   ▼           ▼                          ▼
+Phantom     Phantom MCP              agent.py scripts
+main.py     server (HTTP)            (standalone executables)
+   │              │                        │
+   ▼              ▼                        ▼
+Slack/Teams   Claude Code            CI/CD pipelines
+bot or        Enterprise             (GitHub Actions,
+internal      org-level              Bitbucket, Jenkins)
+web API       MCP + commands
+              (/audit /threat
+               /remediate)
+```
 
 ---
 
-## Developer experience (zero setup)
+## Layer 1 — Developer Security Assistant (Claude Code Enterprise)
 
-1. Developer opens any project in Claude Code
-2. Types `/threat` — Claude analyzes their code for STRIDE + MAESTRO + OWASP threats
-3. Behind the scenes, Claude calls the centrally-hosted Phantom MCP server to load relevant skills
-4. Types `/remediate` — Claude guides them through fixing findings using Phantom skill knowledge
-5. Types `/audit` — Claude audits their dependencies across all detected ecosystems
+**What it does:** Developers get inline security assistance while writing code, without leaving their IDE.
 
-No cloning. No API key. No configuration.
+**How it works:**
+- Slash commands (`/audit`, `/threat`, `/remediate`) are registered org-wide in the Claude Code Enterprise admin console
+- The Phantom MCP server and cve-intel MCP server run as centrally-hosted HTTP services
+- Both MCP servers are registered at org level — available in every developer's Claude Code session in every project
+
+**Developer experience:**
+- Open any project in Claude Code (React, Python, Java, Go — any language)
+- `/audit` — scans dependencies for known vulnerabilities across all detected ecosystems
+- `/threat` — analyzes codebase for STRIDE threats; auto-layers MAESTRO + OWASP LLM/Agentic/MCP Top 10 if AI components are detected; saves findings to `threat-report.json`
+- `/remediate` — loads `threat-report.json` (or session state) and guides targeted fixes through Phantom skill knowledge; routes each finding to the right skill; reports residual risk
+
+**Who uses this:** All developers, daily, during feature development and code review.
+
+**Infrastructure required:**
+- Phantom MCP server deployed as HTTPS service on internal infrastructure
+- cve-intel MCP server deployed as HTTPS service on internal infrastructure
+- Both registered in Claude Code Enterprise admin console as org-level MCP servers
+- `/audit`, `/threat`, `/remediate` registered as org-level slash commands
 
 ---
 
-## Maintenance (security team)
+## Layer 2 — Phantom Security Service (API / Chat)
 
-| Task | Frequency |
-|---|---|
-| Add new skills to the library | As needed — redeploy MCP server image or restart service |
-| Update slash commands | Push changes to `.claude/commands/` and re-upload to Enterprise admin |
-| Update `index.json` | Automatic via CI on merge to main |
-| Rotate cve-intel API keys | Per cve-mcp-server documentation |
+**What it does:** A conversational security expert available to anyone in the org — not just Claude Code users. Teams can ask free-form security questions, get threat models for designs-in-progress, or request compliance gap reports.
+
+**How it works:**
+- `phantom/main.py` is deployed as an internal HTTP API or Slack/Teams bot
+- It uses the Claude API with dynamic skill loading — when a question is asked, it searches `index.json`, loads relevant SKILL.md files, and answers with expert-level guidance drawn from the skill library
+- Seven security personas: general, red-team, appsec, threat-hunting, cloud, forensics, soc
+
+**Example interactions:**
+- "We're building a RAG pipeline for customer PII. What are the risks?" → Phantom loads RAG security + MAESTRO L2 + OWASP LLM skills and gives a structured threat brief
+- "Is our OAuth implementation correct?" → Phantom loads auth-relevant skills and reviews the described flow
+- "We need to pass SOC 2 Type II. Where do we start?" → Phantom loads compliance skills and produces a gap checklist
+- "Generate a MAESTRO threat model for our new multi-agent billing system" → Phantom runs the full 7-layer analysis
+
+**Who uses this:** Architects, product managers, security team, developers with design questions, compliance/legal. Any team member who needs security expertise without knowing which tool to use.
+
+**Deployment options (choose one based on org tooling):**
+- **Slack/Teams bot** — wraps `phantom/main.py` behind a bot framework; teams @mention Phantom in any channel
+- **Internal web app** — simple chat UI over the Phantom API; accessible via SSO
+- **CLI tool** — `phantom` command provisioned org-wide via developer platform (Homebrew tap, apt repo, internal tooling)
+
+**Infrastructure required:**
+- `phantom/main.py` deployed as a containerized service (Dockerfile provided or easily written)
+- `ANTHROPIC_API_KEY` injected via secrets manager (Vault, AWS Secrets Manager, etc.)
+- Skill library (`index.json` + `skills/`) mounted or baked into the container image
+- Internal DNS / SSO / Slack app registration depending on chosen interface
+
+---
+
+## Layer 3 — Automated CI/CD Security Gates
+
+**What it does:** Phantom skills run automatically on every pull request and on a schedule. No developer action required. Findings block merges when severity is HIGH or CRITICAL.
+
+**How it works:**
+- `agent.py` scripts in each skill directory are standalone executables — no Phantom server, no MCP, no Claude API required for most
+- CI/CD pipelines call them directly as pipeline steps
+- All scripts exit with code 1 on HIGH/CRITICAL findings — native CI gate behavior
+- Findings are written to JSON files and uploaded as pipeline artifacts for review
+
+**Standard gates (all projects):**
+
+| Gate | Trigger | Script |
+|---|---|---|
+| Dependency audit | Any change to a package manifest | Ecosystem-native tools (`npm audit`, `pip audit`, etc.) |
+| STRIDE threat scan | PR touching API routes, auth flows, or trust boundaries | `performing-stride-threat-modeling/scripts/agent.py` |
+| Secret scanning | Every push | `mcp__cve-intel__scan_repo_secrets` or `git-secrets` |
+
+**Additional gates (AI/ML projects):**
+
+| Gate | Trigger | Script |
+|---|---|---|
+| LLM output validation | PR touching LLM call sites or prompt templates | `llm-output-validation-and-sanitization/scripts/agent.py` |
+| Excessive agency check | PR touching tool definitions or agent manifests | `llm-excessive-agency-prevention/scripts/agent.py` |
+| RAG pipeline audit | PR touching ingestion pipeline or vector DB config | `rag-pipeline-security-and-data-provenance/scripts/agent.py` |
+| Agent framework audit | PR touching orchestration layer | `ai-agent-framework-security/scripts/agent.py` |
+| Infrastructure hardening | PR touching K8s manifests or IaC | `ai-workload-infrastructure-hardening/scripts/agent.py` |
+
+**Scheduled scans (weekly/monthly):**
+
+| Scan | Cadence | Script |
+|---|---|---|
+| Full MAESTRO audit | Weekly (AI/ML projects) | All layer auditors → `performing-maestro-remediation` |
+| Compliance assessment | Monthly | `ai-governance-and-regulatory-compliance/scripts/agent.py` |
+| Vulnerability report | Weekly | `aws-inspector-findings-reporter/scripts/agent.py` (AWS) |
+
+**Infrastructure required:**
+- Skill library cloned into CI runner image (or checked out as part of pipeline)
+- `ANTHROPIC_API_KEY` available as a CI secret (only needed for skills that call the Claude API)
+- Pipeline config per team (GitHub Actions workflow, Bitbucket pipeline, Jenkinsfile)
+
+---
+
+## Who Owns What
+
+| Component | Owner | Cadence |
+|---|---|---|
+| Skill library (this repo) | Security team | Ongoing — add skills as new threats emerge |
+| Phantom MCP server (hosted) | Platform/DevOps | Deploy on skill library update |
+| cve-intel MCP server (hosted) | Platform/DevOps | Persistent service, auto-restarts |
+| Slash commands in Enterprise admin | Security team | Update when command files change |
+| Phantom chat service | Platform/DevOps | Persistent service |
+| CI/CD gate templates | Security team | Provide as reusable workflow templates per ecosystem |
+| `index.json` | Automated (CI) | Regenerated on every merge to main |
+
+---
+
+## Rollout Sequence
+
+**Phase 1 — Claude Code Enterprise (immediate value, lowest effort)**
+1. Deploy Phantom MCP server and cve-intel MCP server as internal HTTPS services
+2. Register both in Enterprise admin console as org-level MCP servers
+3. Register `/audit`, `/threat`, `/remediate` as org-level slash commands
+4. All developers immediately have security assistance in their IDE
+
+**Phase 2 — CI/CD gates (automated enforcement)**
+1. Security team publishes reusable pipeline templates for each ecosystem
+2. Platform team adds standard gates (dependency audit + secret scan) to all new repos via repo templates
+3. AI/ML project teams opt in to the AI-specific gates
+
+**Phase 3 — Phantom chat service (broader org access)**
+1. Deploy `phantom/main.py` as internal service
+2. Choose interface: Slack bot, web app, or CLI
+3. Announce to architects, product managers, and security team
+4. Run office hours / demo sessions to drive adoption
+
+---
+
+## Security and Access Controls
+
+- All Phantom services sit behind internal SSO — no public exposure
+- `ANTHROPIC_API_KEY` managed centrally via secrets manager — developers never handle it
+- Skill library is read-only at runtime — no write access from any Phantom service
+- CI/CD scripts run with least-privilege runner permissions
+- Audit logs from Phantom chat service retained per org data retention policy

@@ -6,15 +6,22 @@ You apply fixes directly to the developer's codebase. Use the Phantom skill libr
 
 ## 1. Load the threat register
 
-Check whether a threat register is available from this session:
-- **If `/threat` was run in this session:** use the threat register it produced
-- **If not:** tell the user to run `/threat` first and stop
+Check for input in this order of priority:
+
+1. **File argument** — if the user passed a file path (e.g., `/remediate threat-report.json`), load that file
+2. **Default file** — check if `threat-report.json` exists in the project root (written automatically by `/threat`)
+3. **Session state** — if `/threat` was run earlier in this session, use that threat register
+4. **None found** — tell the user to run `/threat` first (it saves `threat-report.json` automatically) and stop
+
+The threat register file follows the JSON structure written by `/threat`. Each finding has: `id`, `framework`, `component`, `threat`, `severity`, `likelihood`, `impact`, `mitigation`, `skill`, `status`.
 
 Display a triage summary before proceeding:
 
 ```
 Threat register loaded
 ─────────────────────
+Source:          threat-report.json  (or session / filename)
+Generated:       <timestamp from file>
 Total findings:  <n>
   Critical:      <n>
   High:          <n>
@@ -187,3 +194,13 @@ If any **Critical findings remain open**, end with:
 ```
 ⚠ PRODUCTION GATE: <n> Critical finding(s) unresolved. Do not deploy until addressed.
 ```
+
+### Update threat-report.json
+
+After remediation, write the updated status of every finding back to `threat-report.json`:
+- Set `"status": "fixed"` for resolved findings
+- Set `"status": "pending"` with a `"blocked_by"` field explaining what remains
+- Set `"status": "architectural"` for findings requiring design changes, with a `"sprint_note"` field
+- Update `"summary"` counts to reflect current state
+
+This ensures `/remediate` can be re-run incrementally as findings are closed over time, and the file serves as a persistent audit trail of security progress across sessions.

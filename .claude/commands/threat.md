@@ -198,7 +198,7 @@ Load and apply any relevant skills found using `mcp__phantom-skills__load_skill`
 
 ---
 
-## 6. Report findings
+## 6. Report findings and save threat register
 
 Produce a structured threat report with the following sections:
 
@@ -231,3 +231,46 @@ For each threat found, report:
 - List mitigations in priority order (Critical → High → Medium → Low)
 - Flag any threat that requires architectural change vs. a code-level fix
 - Suggest which Phantom skills to run for deeper automated analysis
+
+---
+
+## 7. Save threat register to file
+
+After producing the report, write the full threat register to `threat-report.json` in the project root using the `write_file` tool or direct file write. This file is the input to `/remediate` and persists across sessions.
+
+The file must follow this structure:
+
+```json
+{
+  "generated_at": "<ISO 8601 timestamp>",
+  "project": "<detected project name or directory>",
+  "application_profile": {
+    "types": ["web-api", "ai-agentic"],
+    "ai_signals": ["anthropic", "langchain"],
+    "frameworks_applied": ["STRIDE", "MAESTRO", "OWASP-LLM"]
+  },
+  "summary": {
+    "total": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0
+  },
+  "findings": [
+    {
+      "id": "STRIDE-S-01",
+      "framework": "STRIDE",
+      "component": "src/auth/login.py:42",
+      "threat": "...",
+      "severity": "High",
+      "likelihood": "Medium",
+      "impact": "...",
+      "mitigation": "...",
+      "skill": "performing-stride-threat-modeling",
+      "status": "open"
+    }
+  ]
+}
+```
+
+Confirm to the user that `threat-report.json` has been written and is ready for `/remediate`.
