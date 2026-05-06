@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Display name: Cybersecurity Skills** (formerly Anthropic-Cybersecurity-Skills). The GitHub repo slug retains the original name; the project is independently maintained and not affiliated with Anthropic PBC.
 
-This is a library of 796 cybersecurity skills for AI agents, mapped to 5 industry frameworks:
+This is a library of 802 cybersecurity skills for AI agents, mapped to 5 industry frameworks:
 - **MITRE ATT&CK Enterprise** — offensive techniques (218 unique techniques, 100% of 14 tactics)
 - **NIST Cybersecurity Framework 2.0** — risk management functions/categories
 - **MITRE ATLAS v5.5** — AI-specific threats
@@ -20,9 +20,18 @@ The library includes full coverage of four AI/agentic security frameworks:
 - **OWASP LLM Top 10 2025** (LLM01–LLM10) — 9 new skills covering LLM02–LLM10; LLM01 covered by `detecting-ai-model-prompt-injection-attacks`
 - **OWASP MCP Top 10 v0.1** (MCP01–MCP10) — 10 skills under `mcp-*` prefix
 - **OWASP Top 10 for Agentic Applications 2026** (ASI01–ASI10) — 10 skills under `agent-*`, `agentic-*`, `rogue-*`, `human-agent-*`, `securing-inter-*` prefixes
-- **MAESTRO Framework** (7 layers + cross-layer threats) — 6 skills covering all MAESTRO threat domains: `performing-maestro-threat-modeling`, `rag-pipeline-security-and-data-provenance`, `ai-model-extraction-and-reprogramming-defense`, `ai-evaluation-security-and-observability-hardening`, `ai-governance-and-regulatory-compliance`, `ai-workload-infrastructure-hardening`
+- **MAESTRO Framework** (7 layers + cross-layer threats) — 12 skills providing complete layer-by-layer coverage:
+  - Threat modeling: `performing-maestro-threat-modeling`
+  - L1 Foundation Models: `ai-model-extraction-and-reprogramming-defense` (L1-T02/T06), `adversarial-robustness-and-evasion-defense` (L1-T01/T03/T07)
+  - L2 Data Operations: `rag-pipeline-security-and-data-provenance`, `ai-data-operations-availability-and-integrity` (L2-T03/T04)
+  - L3 Agent Frameworks: `ai-agent-framework-security` (all L3 threats)
+  - L4 Deployment & Infrastructure: `ai-workload-infrastructure-hardening`
+  - L5 Evaluation & Observability: `ai-evaluation-security-and-observability-hardening`
+  - L6 Security & Compliance: `ai-governance-and-regulatory-compliance` (compliance side), `ai-security-tool-adversarial-defense` (threat side)
+  - L7 Agent Ecosystem: `ai-agent-ecosystem-security` (all L7 threats)
+  - Cross-Layer Mitigations: `ai-explainability-and-formal-verification` (XAI, formal verification, reputation systems)
 
-All 35 AI security skills use `subdomain: ai-security` (an accepted extension to the standard 26 subdomains).
+All 41 AI security skills use `subdomain: ai-security` (an accepted extension to the standard 26 subdomains).
 
 ## MCP Servers
 
@@ -93,6 +102,12 @@ Phantom can execute `scripts/agent.py` files directly via the `run_skill_agent` 
 - `ai-evaluation-security-and-observability-hardening` — `agent.py audit-eval --config eval_config.json` / `agent.py audit-telemetry --config telemetry_config.json` — audits eval pipeline (10 controls: dataset signing, adversarial regression, isolation) and telemetry stack (11 controls: tamper-evident logging, PII redaction, behavioral baselines, ML-based anomaly detection) (no API key required)
 - `ai-governance-and-regulatory-compliance` — `agent.py assess --system "Name" --risk-tier high|limited|minimal --framework eu-ai-act|nist-ai-rmf|iso-42001|all` then `agent.py score --checklist compliance_report.json` — generates compliance checklist (EU AI Act Articles 9-16/26/49/72, NIST AI RMF GOVERN/MAP/MEASURE/MANAGE, ISO 42001 Clauses 4-10); scores filled-in checklist as gap report (no API key required)
 - `ai-workload-infrastructure-hardening` — `agent.py scan --config infra_config.json` / `agent.py scan-k8s --manifest deployment.json` — audits AI workload infra (16 controls: image signing/scanning, non-root execution, resource limits, network policy, RBAC, admission controllers, agent-to-vectorDB/secret-store isolation, vault integration) and parses raw `kubectl get deployment -o json` output for K8s-native checks (no API key required)
+- `ai-agent-framework-security` — `agent.py audit --config framework_config.json` — audits orchestration frameworks (LangChain, AutoGen, CrewAI, etc.) for 15 MAESTRO L3 controls: dependency pinning/integrity/CVE scanning, tool allowlisting, schema validation, unsafe pattern blocking (eval/exec/shell=True), code execution sandboxing, output sanitization, prompt injection filter, framework API rate limiting, audit logging, plugin vetting (no API key required)
+- `ai-agent-ecosystem-security` — `agent.py audit --config ecosystem_config.json` — audits agent registries and marketplaces for 18 MAESTRO L7 controls: registry signing, capability attestation, agent vetting/revocation, cryptographic agent identity, mutual authentication, per-action attribution, non-repudiable append-only logs, OAuth scope minimization, webhook signature verification, malicious agent filtering, Sybil-resistant reputation scoring, pricing anomaly detection (no API key required)
+- `ai-security-tool-adversarial-defense` — `agent.py audit --config security_tool_config.json` — audits AI-based security tools (ML IDS, SIEM detectors, fraud classifiers) for 20 MAESTRO L6 threat-side controls: training data signing/provenance/access, adversarial samples in training, poisoning detection, evasion detection, output consistency monitoring, per-decision explainability, kill switch, bias coverage, adversarial regression testing, model update authentication (no API key required)
+- `adversarial-robustness-and-evasion-defense` — `agent.py probe --config model_robustness_config.json` (L1-T01/T07: adversarial examples + sponge defenses, 10 controls) / `agent.py backdoor-scan --config backdoor_config.json` (L1-T03: weight-level backdoor detection, 6 controls) — audits for input preprocessing, adversarial training, OOD detection, complexity scoring, compute budgets, output consistency, model provenance, activation clustering analysis, Neural Cleanse posture (no API key required)
+- `ai-data-operations-availability-and-integrity` — `agent.py audit --config data_ops_config.json` — audits databases, event streams, and object stores for 22 MAESTRO L2 availability/integrity controls (L2-T03/T04): encryption in transit/at rest, connection limits, query timeouts, replication/failover, backups, integrity checksums, change data capture, event stream authentication/message integrity, object versioning/immutability, health monitoring, circuit breakers (no API key required)
+- `ai-explainability-and-formal-verification` — `agent.py audit-xai --config xai_config.json` (11 XAI controls: per-decision local/global explanations, counterfactuals, auditor access, forensic reconstruction, tamper-evident storage, appeal mechanisms) / `agent.py verify-goals --manifest agent_goals.json` (10 formal verification controls: formal goal/constraint specification, runtime constraint checker, reward hacking testing, invariant monitoring) / `agent.py reputation-audit --config reputation_config.json` (8 Sybil-resistance controls: identity verification, coordinated-rating detection, reputation decay, bootstrap protection) (no API key required)
 
 **SOC / SIEM:**
 - `securonix-siem-operations` — `agent.py query --use-case brute-force|lateral-movement|data-exfiltration|insider-threat|cloud-abuse|ransomware` / `agent.py convert --spl "..."` / `agent.py triage --alert-type <type>` — SPOTTER query generation, SPL→SPOTTER conversion, triage checklists (no API key required)
