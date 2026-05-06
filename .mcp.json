@@ -7,6 +7,23 @@
     "cve-intel": {
       "command": "python3",
       "args": ["-m", "cve_mcp.server"]
+    },
+    "dast": {
+      "command": "python3",
+      "args": ["mcp/dast_mcp_server.py"],
+      "env": {
+        "ZAP_URL": "http://localhost:8080",
+        "ZAP_API_KEY": "",
+        "BURP_URL": "http://localhost:1337",
+        "BURP_API_KEY": ""
+      }
+    },
+    "burp-pentest": {
+      "command": "python3",
+      "args": ["mcp/burp_pentest_mcp_server.py"],
+      "env": {
+        "PHANTOM_BURP_URL": "http://127.0.0.1:9877"
+      }
     }
   }
 }
