@@ -54,6 +54,7 @@ def normalise(data: dict, source_file: str) -> tuple[str, str, list[dict]]:
                     detail   = fi.get("detail", fi.get("description", "")),
                     evidence = fi.get("evidence", fi.get("param", "")),
                     remediation = fi.get("remediation", fi.get("solution", "")),
+                    reproduction_steps = fi.get("reproduction_steps", fi.get("steps_to_reproduce", "")),
                     source   = method,
                 ))
 
@@ -76,6 +77,7 @@ def normalise(data: dict, source_file: str) -> tuple[str, str, list[dict]]:
                     detail   = ctrl.get("description", ""),
                     evidence = "",
                     remediation = "",
+                    reproduction_steps = ctrl.get("reproduction_steps", ctrl.get("steps_to_reproduce", "")),
                     source   = method,
                 ))
 
@@ -95,6 +97,7 @@ def normalise(data: dict, source_file: str) -> tuple[str, str, list[dict]]:
                 detail   = fi.get("detail", fi.get("description", fi.get("alert", ""))),
                 evidence = fi.get("evidence", fi.get("param", "")),
                 remediation = fi.get("solution", fi.get("remediation", "")),
+                reproduction_steps = fi.get("reproduction_steps", fi.get("steps_to_reproduce", "")),
                 source   = method,
             ))
 
@@ -104,16 +107,17 @@ def normalise(data: dict, source_file: str) -> tuple[str, str, list[dict]]:
 
 def _make_finding(**kwargs) -> dict:
     return {
-        "title":       kwargs.get("title", ""),
-        "severity":    kwargs.get("severity", "INFO"),
-        "owasp":       kwargs.get("owasp", ""),
-        "asvs":        kwargs.get("asvs", ""),
-        "cwe":         kwargs.get("cwe", ""),
-        "url":         kwargs.get("url", ""),
-        "detail":      kwargs.get("detail", ""),
-        "evidence":    kwargs.get("evidence", ""),
-        "remediation": kwargs.get("remediation", ""),
-        "source":      kwargs.get("source", ""),
+        "title":               kwargs.get("title", ""),
+        "severity":            kwargs.get("severity", "INFO"),
+        "owasp":               kwargs.get("owasp", ""),
+        "asvs":                kwargs.get("asvs", ""),
+        "cwe":                 kwargs.get("cwe", ""),
+        "url":                 kwargs.get("url", ""),
+        "detail":              kwargs.get("detail", ""),
+        "evidence":            kwargs.get("evidence", ""),
+        "remediation":         kwargs.get("remediation", ""),
+        "reproduction_steps":  kwargs.get("reproduction_steps", ""),
+        "source":              kwargs.get("source", ""),
     }
 
 
@@ -223,6 +227,14 @@ h3 { font-size: 16px; font-weight: 600; color: #0f172a; }
 .remediation-box h4 { font-size: 12px; color: #166534; text-transform: uppercase;
                        letter-spacing: 1px; margin-bottom: 6px; }
 .remediation-box p { font-size: 13px; color: #166534; }
+.reproduction-box { background: #faf5ff; border: 1px solid #e9d5ff;
+                    border-radius: 6px; padding: 12px 16px; margin-top: 12px; }
+.reproduction-box h4 { font-size: 12px; color: #6b21a8; text-transform: uppercase;
+                        letter-spacing: 1px; margin-bottom: 8px; }
+.reproduction-box pre { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+                         font-size: 12px; color: #3b0764; background: #f3e8ff;
+                         border-radius: 4px; padding: 10px 12px; overflow-x: auto;
+                         white-space: pre-wrap; word-break: break-all; margin: 0; }
 
 /* Methodology */
 .methodology { background: white; border: 1px solid #e2e8f0; border-radius: 8px;
@@ -231,9 +243,6 @@ h3 { font-size: 16px; font-weight: 600; color: #0f172a; }
 .methodology td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
 .methodology td:first-child { width: 180px; color: #64748b; font-weight: 500; }
 
-/* Footer */
-.footer { text-align: center; color: #94a3b8; font-size: 12px;
-          padding: 40px 0; border-top: 1px solid #e2e8f0; margin-top: 40px; }
 
 /* Print */
 @media print {
@@ -327,6 +336,15 @@ def render_html(title, target, author, date_str, overall_risk, findings,
                     f'</div>'
                 )
 
+            repro_block = ""
+            if f.get("reproduction_steps"):
+                repro_block = (
+                    f'<div class="reproduction-box">'
+                    f'<h4>How to Reproduce</h4>'
+                    f'<pre>{_h(f["reproduction_steps"])}</pre>'
+                    f'</div>'
+                )
+
             cards += f"""
 <div class="finding">
   <div class="finding-header">
@@ -337,6 +355,7 @@ def render_html(title, target, author, date_str, overall_risk, findings,
     <table>{rows}</table>
     <div class="finding-detail">{_h(f["detail"])}</div>
     {evidence_block}
+    {repro_block}
     {remed_block}
   </div>
 </div>"""
@@ -376,7 +395,7 @@ def render_html(title, target, author, date_str, overall_risk, findings,
   <table class="cover-meta">
     <tr><td>Target</td><td>{_h(target or "Multiple targets")}</td></tr>
     <tr><td>Date</td><td>{_h(date_str)}</td></tr>
-    <tr><td>Prepared by</td><td>{_h(author or "Phantom Security")}</td></tr>
+    <tr><td>Prepared by</td><td>{_h(author or "Emmanuel Okonkwo (Phantom)")}</td></tr>
     <tr><td>Total Findings</td><td>{total}</td></tr>
     <tr><td>Overall Risk</td>
         <td><span class="risk-badge risk-{risk_badge_class}">{overall_risk}</span></td></tr>
@@ -409,10 +428,6 @@ def render_html(title, target, author, date_str, overall_risk, findings,
     </table>
   </div>
 
-  <div class="footer">
-    Generated by Phantom · Cybersecurity Skills Library ·
-    <a href="https://github.com/EmmaOK/Anthropic-Cybersecurity-Skills">github.com/EmmaOK/Anthropic-Cybersecurity-Skills</a>
-  </div>
 </div>
 
 </body>
@@ -462,7 +477,7 @@ def render_pdf(title, target, author, date_str, overall_risk, findings,
 
     # Cover meta
     meta = [("Target", target or "Multiple targets"), ("Date", date_str),
-            ("Prepared by", author or "Phantom Security"),
+            ("Prepared by", author or "Emmanuel Okonkwo (Phantom)"),
             ("Total Findings", str(len(findings)))]
     pdf.ln(20)
     for label, val in meta:

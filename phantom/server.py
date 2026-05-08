@@ -43,6 +43,7 @@ from main import (
     PERSONAS, ROOT, MODEL, MAX_TOKENS,
     save_session, load_session, list_sessions, _serialize_messages,
 )
+from phishing import investigate_phishing, get_result, list_results
 
 # ---------------------------------------------------------------------------
 # App
@@ -310,3 +311,201 @@ async def deny_link(request: Request, aid: str, token: str = Query(...)):
     return templates.TemplateResponse("approval_result.html",
         {"request": request, "decision": "denied", "approval": a,
          "modes": list(PERSONAS.keys()), "pending_approvals": pending_count()})
+
+
+# ---------------------------------------------------------------------------
+# Phishing Investigation
+# ---------------------------------------------------------------------------
+
+class PhishingRequest(BaseModel):
+    raw_email: str           # raw .eml content (full RFC 2822 email)
+    reported_by: str = ""    # reporter email address
+    report_id: str = ""      # optional — generated if not provided
+
+
+@app.post("/api/investigate/phishing")
+async def api_investigate_phishing(req: PhishingRequest):
+    """
+    Accept a raw email and run autonomous phishing investigation.
+    Blocks until investigation completes (typically 30–90 seconds).
+    Called by the AWS Lambda function after SES delivers an email to S3.
+    """
+    result = await asyncio.to_thread(
+        investigate_phishing,
+        req.raw_email,
+        req.reported_by,
+        req.report_id,
+    )
+    # Return full result except the lengthy report_markdown to keep response small.
+    # Retrieve full report via GET /api/investigate/phishing/{report_id}
+    slim = {k: v for k, v in result.items() if k != "report_markdown"}
+    slim["report_url"] = f"/api/investigate/phishing/{result['report_id']}"
+    return JSONResponse(slim)
+
+
+@app.get("/api/investigate/phishing")
+async def api_list_investigations(limit: int = Query(default=50, le=200)):
+    """List recent phishing investigations (no report bodies)."""
+    return JSONResponse({"investigations": list_results(limit)})
+
+
+@app.get("/api/investigate/phishing/{report_id}")
+async def api_get_investigation(report_id: str):
+    """Get full investigation result including the Markdown report."""
+    result = get_result(report_id)
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(result)
+
+
+@app.get("/api/investigate/phishing/{report_id}/report")
+async def api_get_report_markdown(report_id: str):
+    """Return the raw Markdown investigation report."""
+    result = get_result(report_id)
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    md = result.get("report_markdown", "")
+    if not md:
+        report_path = Path(result.get("report_path", ""))
+        if report_path.exists():
+            md = report_path.read_text(encoding="utf-8")
+    return JSONResponse({"report_id": report_id, "report_markdown": md})
+
+
+# ---------------------------------------------------------------------------
+# Universal Kill Phish Webhook
+# Accepts reports from any email client (Gmail add-on, Outlook add-in,
+# Proofpoint, Mimecast, manual API call, etc.)
+# Returns immediately — investigation runs in background, results emailed.
+# ---------------------------------------------------------------------------
+
+import base64 as _base64
+import hashlib as _hashlib
+
+# Background investigation status store (report_id → "investigating" | verdict)
+_WEBHOOK_STATUS: dict[str, str] = {}
+# Deduplication: content hash → report_id (prevents re-investigating same email)
+_SEEN_HASHES: dict[str, str] = {}
+
+
+class KillPhishRequest(BaseModel):
+    # Email content — provide exactly one of these three
+    raw_email:    str | None = None   # full RFC 2822 string (Gmail getRawContent())
+    email_base64: str | None = None   # base64-encoded RFC 2822 (Outlook getAsFileAsync())
+    # Structured fallback — used when client cannot obtain raw EML
+    subject:      str | None = None
+    from_address: str | None = None
+    to_address:   str | None = None
+    date:         str | None = None
+    body_html:    str | None = None
+    body_text:    str | None = None
+    headers:      dict | None = None  # extra headers as key→value dict
+
+    # Metadata
+    reported_by:     str = ""         # reporter's email address
+    source:          str = "unknown"  # "gmail-addon", "outlook-addin", "api", etc.
+    report_id:       str = ""         # optional — generated if omitted
+    message_id:      str = ""         # email Message-ID for deduplication
+    gmail_message_id: str = ""        # Gmail thread/message ID for deduplication
+
+
+def _normalise_email(req: KillPhishRequest) -> str:
+    """Produce a raw RFC 2822 string from whichever fields were provided."""
+    if req.raw_email:
+        return req.raw_email
+
+    if req.email_base64:
+        try:
+            return _base64.b64decode(req.email_base64).decode("utf-8", errors="replace")
+        except Exception:
+            pass
+
+    # Structured fallback — reconstruct minimal RFC 2822
+    lines = []
+    if req.from_address:
+        lines.append(f"From: {req.from_address}")
+    if req.to_address:
+        lines.append(f"To: {req.to_address}")
+    if req.subject:
+        lines.append(f"Subject: {req.subject}")
+    if req.date:
+        lines.append(f"Date: {req.date}")
+    if req.message_id:
+        lines.append(f"Message-ID: {req.message_id}")
+    if req.headers:
+        for k, v in req.headers.items():
+            lines.append(f"{k}: {v}")
+    lines.append("Content-Type: text/html; charset=utf-8")
+    lines.append("")
+    lines.append(req.body_html or req.body_text or "(no body)")
+    return "\r\n".join(lines)
+
+
+async def _investigate_in_background(raw_email: str, reported_by: str, report_id: str):
+    """Run investigation in a background thread; update status when done."""
+    try:
+        result = await asyncio.to_thread(investigate_phishing, raw_email, reported_by, report_id)
+        _WEBHOOK_STATUS[report_id] = result.get("verdict", "complete")
+    except Exception as e:
+        _WEBHOOK_STATUS[report_id] = f"error: {e}"
+
+
+@app.post("/api/webhook/phishing-report")
+async def api_killphish_webhook(req: KillPhishRequest):
+    """
+    Universal Kill Phish webhook — called by Gmail add-on, Outlook add-in,
+    or any email security tool. Returns immediately; investigation runs async.
+
+    Accepts raw EML, base64-encoded EML, or structured JSON fields.
+    Deduplicates by Message-ID and content hash to avoid re-investigating
+    the same email submitted from multiple clients simultaneously.
+    """
+    raw_email = _normalise_email(req)
+    if not raw_email.strip():
+        return JSONResponse({"error": "No email content provided."}, status_code=400)
+
+    # Deduplicate by Message-ID header
+    dedup_key = req.message_id or req.gmail_message_id or ""
+    if not dedup_key:
+        dedup_key = _hashlib.sha256(raw_email[:2000].encode()).hexdigest()[:16]
+
+    if dedup_key in _SEEN_HASHES:
+        existing_id = _SEEN_HASHES[dedup_key]
+        return JSONResponse({
+            "report_id":   existing_id,
+            "status":      _WEBHOOK_STATUS.get(existing_id, "investigating"),
+            "deduplicated": True,
+            "message":     "This email was already reported. Check your inbox for results.",
+            "status_url":  f"/api/webhook/phishing-report/{existing_id}",
+        })
+
+    # Generate report ID
+    report_id = req.report_id or f"phi-{uuid.uuid4().hex[:10]}"
+    _SEEN_HASHES[dedup_key] = report_id
+    _WEBHOOK_STATUS[report_id] = "investigating"
+
+    # Fire investigation in background — do not await
+    asyncio.create_task(
+        _investigate_in_background(raw_email, req.reported_by, report_id)
+    )
+
+    return JSONResponse({
+        "report_id":  report_id,
+        "status":     "investigating",
+        "source":     req.source,
+        "message":    "Received. Phantom is investigating — we'll email you the verdict.",
+        "status_url": f"/api/webhook/phishing-report/{report_id}",
+    })
+
+
+@app.get("/api/webhook/phishing-report/{report_id}")
+async def api_killphish_status(report_id: str):
+    """Poll investigation status. Used by add-ins that want to show live results."""
+    status = _WEBHOOK_STATUS.get(report_id)
+    if status is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    result = get_result(report_id)
+    if result:
+        slim = {k: v for k, v in result.items() if k != "report_markdown"}
+        return JSONResponse({"status": "complete", "result": slim})
+    return JSONResponse({"status": status, "report_id": report_id})

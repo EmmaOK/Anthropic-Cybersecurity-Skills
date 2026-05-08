@@ -5,6 +5,7 @@ import json
 import argparse
 import logging
 import subprocess
+import sys
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -133,16 +134,97 @@ def generate_report(policies, pods, namespaces):
     return report
 
 
+def generate_default_deny_manifest(namespace):
+    """Generate a default-deny-all NetworkPolicy for a namespace."""
+    return f"""apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {namespace}
+spec:
+  podSelector: {{}}
+  policyTypes:
+  - Ingress
+  - Egress
+"""
+
+
+def generate_allow_dns_manifest(namespace):
+    """Generate a policy to allow DNS egress (required for most workloads)."""
+    return f"""apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {namespace}
+spec:
+  podSelector: {{}}
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+"""
+
+
+def apply_manifest(yaml_content, dry_run=True):
+    """Apply a YAML manifest via kubectl."""
+    import tempfile
+    import os
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        tmp = f.name
+    try:
+        cmd = ["kubectl", "apply", "-f", tmp]
+        if dry_run:
+            cmd += ["--dry-run=client"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return {
+            "success": result.returncode == 0,
+            "dry_run": dry_run,
+            "output": result.stdout.strip() or result.stderr.strip(),
+        }
+    finally:
+        os.unlink(tmp)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Kubernetes Network Policy Audit Agent")
+    parser = argparse.ArgumentParser(description="Kubernetes Network Policy Audit and Implementation Agent")
     parser.add_argument("--namespace", default="--all-namespaces", help="Namespace to audit")
     parser.add_argument("--output", default="k8s_netpol_report.json")
+    parser.add_argument("--apply", action="store_true",
+                        help="Apply default-deny + allow-dns policies to unprotected namespaces")
+    parser.add_argument("--no-dry-run", dest="dry_run", action="store_false",
+                        help="Actually apply policies (default: dry-run only)")
+    parser.set_defaults(dry_run=True)
     args = parser.parse_args()
 
     policies = get_network_policies(args.namespace)
     pods = get_pods(args.namespace)
     namespaces = get_namespaces()
     report = generate_report(policies, pods, namespaces)
+
+    if args.apply:
+        unprotected = report["namespace_isolation"]["unprotected_namespaces"]
+        apply_results = []
+        mode = "DRY RUN" if args.dry_run else "APPLYING"
+        print(f"\n[{mode}] default-deny + allow-dns policies for {len(unprotected)} namespaces")
+        for ns in unprotected:
+            deny_manifest = generate_default_deny_manifest(ns)
+            dns_manifest = generate_allow_dns_manifest(ns)
+            deny_result = apply_manifest(deny_manifest, args.dry_run)
+            dns_result = apply_manifest(dns_manifest, args.dry_run)
+            apply_results.append({
+                "namespace": ns,
+                "default_deny": deny_result,
+                "allow_dns": dns_result,
+            })
+            status = "✓" if deny_result["success"] else "✗"
+            print(f"    {status} {ns} — default-deny-all: {deny_result['output'][:80]}")
+        report["apply_results"] = apply_results
+
     with open(args.output, "w") as f:
         json.dump(report, f, indent=2, default=str)
     logger.info("K8s NetPol: %.1f%% pod coverage, %.1f%% namespace isolation, %d findings",
@@ -150,6 +232,9 @@ def main():
                 report["namespace_isolation"]["isolation_percent"],
                 report["total_findings"])
     print(json.dumps(report, indent=2, default=str))
+
+    if report["total_findings"] > 0 or report["namespace_isolation"]["isolation_percent"] < 50:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

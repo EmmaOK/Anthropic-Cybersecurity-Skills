@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -158,6 +159,42 @@ def set_nested(obj: dict, path: str, value) -> None:
     for p in parts[:-1]:
         obj = obj.setdefault(p, {})
     obj[parts[-1]] = value
+
+
+def apply_fixes(config: dict, findings: list, controls: list) -> tuple:
+    """Return (fixed_config, changes_list).
+
+    Only fixes controls that have a 'field_path' (skips check_all_sources controls
+    like RAG-010 and RAG-011 which require manual data-source edits).
+    """
+    fixed = copy.deepcopy(config)
+    changes = []
+    ctrl_by_id = {c["id"]: c for c in controls}
+    for finding in findings:
+        ctrl = ctrl_by_id.get(finding.get("id"))
+        if not ctrl:
+            continue
+        # Skip data-source-level controls — they apply per-source, not at the config root
+        if ctrl.get("check_all_sources"):
+            continue
+        field_path = ctrl.get("field_path")
+        if not field_path:
+            continue
+        old_val = finding.get("value_found", False)
+        # Derive the correct value from the existing _RAG_PATCHES table when available,
+        # otherwise default to True for boolean fields.
+        patch = _RAG_PATCHES.get(finding["id"])
+        new_val = patch["value"] if patch else True
+        changes.append({
+            "finding_id": finding["id"],
+            "severity": finding["severity"],
+            "field": field_path,
+            "old_value": old_val,
+            "new_value": new_val,
+            "remediation_note": ctrl["remediation"][:150],
+        })
+        set_nested(fixed, field_path, new_val)
+    return fixed, changes
 
 
 def audit_config(config: dict) -> list[dict]:
@@ -486,6 +523,11 @@ def main():
     p_rem.add_argument("--config", required=True, help="Original RAG pipeline config JSON to patch")
     p_rem.add_argument("--output", default=None,  help="Output file (default: <config>.patched.json)")
 
+    fix_p = sub.add_parser("fix", help="Generate corrected config from audit output")
+    fix_p.add_argument("--audit",      required=True, help="Path to audit output JSON from the audit subcommand")
+    fix_p.add_argument("--config",     required=True, help="Path to the original config JSON that was audited")
+    fix_p.add_argument("--output-dir", default="remediation-output", help="Directory for output files")
+
     args = parser.parse_args()
     if args.subcommand == "audit":
         cmd_audit(args)
@@ -493,6 +535,37 @@ def main():
         cmd_scan_documents(args)
     elif args.subcommand == "remediate":
         cmd_remediate(args)
+    elif args.subcommand == "fix":
+        with open(args.audit) as f:
+            audit_data = json.load(f)
+        with open(args.config) as f:
+            original_config = json.load(f)
+
+        findings = audit_data.get("findings", [])
+        fixed_config, changes = apply_fixes(original_config, findings, RAG_CONTROLS)
+
+        os.makedirs(args.output_dir, exist_ok=True)
+
+        config_basename = os.path.basename(args.config)
+        fixed_path = os.path.join(args.output_dir, f"fixed_{config_basename}")
+        with open(fixed_path, "w") as f:
+            json.dump(fixed_config, f, indent=2)
+
+        summary = {
+            "fix_timestamp": datetime.now(timezone.utc).isoformat(),
+            "source_audit": args.audit,
+            "source_config": args.config,
+            "fixed_config_path": fixed_path,
+            "total_findings": len(findings),
+            "fixes_applied": len(changes),
+            "changes": changes,
+        }
+        summary_path = os.path.join(args.output_dir, "fix_summary.json")
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+
+        print(json.dumps(summary, indent=2))
+        sys.exit(0)
 
 
 if __name__ == "__main__":

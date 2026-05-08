@@ -1,0 +1,28 @@
+{
+  "timeZone": "America/New_York",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Kill Phish",
+      "logoUrl": "https://www.gstatic.com/images/icons/material/system/2x/security_white_48dp.png",
+      "homepageTrigger": {
+        "runFunction": "buildHomepage"
+      }
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "buildKillPhishCard"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "report_date": "2026-05-06T03:52:08.738512",
+  "base_url": "http://localhost:9999",
+  "unauthenticated_endpoints": [],
+  "jwt_analysis": null,
+  "secret_found": false,
+  "findings": [],
+  "total_findings": 0
+}

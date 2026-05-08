@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Phantom Phishing Ingest Pipeline
+  SES → S3 → Lambda → Phantom API → SNS
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+
+Parameters:
+  PhantomUrl:
+    Type: String
+    Description: "Phantom web server URL (e.g. https://phantom.corp.com)"
+
+  PhantomApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: "Optional Bearer token for Phantom (leave blank if no auth)"
+
+  PhishingEmailAddress:
+    Type: String
+    Description: "Email address to receive reported phishing (e.g. phishing@corp.com)"
+
+  AlertEmailAddress:
+    Type: String
+    Description: "Security team email address to receive investigation verdicts"
+
+  PhantomFromEmail:
+    Type: String
+    Description: "SES-verified sender address for Phantom notifications (e.g. phantom@corp.com)"
+
+  SecurityTeamEmail:
+    Type: String
+    Description: "Security team email for full investigation reports (can be same as AlertEmailAddress)"
+
+  SesRuleSetName:
+    Type: String
+    Default: "phantom-phishing"
+    Description: "SES receipt rule set name (must be the active rule set)"
+
+  InvestigationTimeoutSeconds:
+    Type: Number
+    Default: 180
+    Description: "Seconds Lambda waits for Phantom to complete investigation (max 600)"
+
+
+# ── Globals ───────────────────────────────────────────────────────────────────
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 600          # Lambda max — Phantom investigation can take ~90s
+    MemorySize: 256
+    Environment:
+      Variables:
+        PHANTOM_URL: !Ref PhantomUrl
+        PHANTOM_API_KEY: !Ref PhantomApiKey
+        SNS_TOPIC_ARN: !Ref VerdictTopic
+        INVESTIGATION_TIMEOUT: !Ref InvestigationTimeoutSeconds
+        # These are read by phantom/notifier.py running inside the Phantom server,
+        # not by Lambda itself — set them as env vars on the Phantom ECS task instead.
+        # Listed here for documentation clarity.
+
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+
+Resources:
+
+  # S3 bucket — SES stores raw .eml files here
+  PhishingInboxBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "phantom-phishing-inbox-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: RetainFor90Days
+            Status: Enabled
+            ExpirationInDays: 90
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: "s3:ObjectCreated:*"
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: "emails/"
+            Function: !GetAtt PhishingIngestFunction.Arn
+
+  # S3 bucket policy — allows SES to write to it
+  PhishingInboxBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PhishingInboxBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowSESPut
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${PhishingInboxBucket}/emails/*"
+            Condition:
+              StringEquals:
+                aws:Referer: !Ref AWS::AccountId
+
+  # SNS topic — sends verdict notifications to security team
+  VerdictTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: phantom-phishing-verdicts
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmailAddress
+
+  # Lambda function
+  PhishingIngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: phantom-phishing-ingest
+      CodeUri: ./
+      Handler: phishing_ingest.handler
+      Description: "Receives phishing emails from S3 (via SES), calls Phantom, publishes verdict"
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref PhishingInboxBucket
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt VerdictTopic.TopicName
+        # SES send permission — needed so Phantom (running in ECS) can send emails.
+        # The ECS task role should include this; Lambda itself does not send emails.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+
+  # Allow S3 to invoke Lambda
+  LambdaS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PhishingIngestFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt PhishingInboxBucket.Arn
+      SourceAccount: !Ref AWS::AccountId
+
+  # SES receipt rule — routes phishing@corp.com → S3
+  # NOTE: The rule set named by SesRuleSetName must already be created
+  # and set as the ACTIVE rule set in SES (console or CLI).
+  PhishingReceiptRule:
+    Type: AWS::SES::ReceiptRule
+    Properties:
+      RuleSetName: !Ref SesRuleSetName
+      Rule:
+        Name: phantom-phishing-ingest
+        Enabled: true
+        ScanEnabled: true
+        Recipients:
+          - !Ref PhishingEmailAddress
+        Actions:
+          - S3Action:
+              BucketName: !Ref PhishingInboxBucket
+              ObjectKeyPrefix: "emails/"
+
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+
+Outputs:
+  PhishingInboxBucket:
+    Description: "S3 bucket where SES stores incoming phishing reports"
+    Value: !Ref PhishingInboxBucket
+
+  LambdaFunctionArn:
+    Description: "ARN of the phishing ingest Lambda"
+    Value: !GetAtt PhishingIngestFunction.Arn
+
+  VerdictTopicArn:
+    Description: "SNS topic ARN for investigation verdicts"
+    Value: !Ref VerdictTopic
+
+  PhishingAddress:
+    Description: "Email address employees should forward suspicious emails to"
+    Value: !Ref PhishingEmailAddress

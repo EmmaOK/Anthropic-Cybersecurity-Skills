@@ -589,6 +589,401 @@ def cmd_remediate(args) -> dict:
     return report
 
 
+# ── IaC snippet generation ─────────────────────────────────────────────────
+
+_IAC_SNIPPETS: dict[str, tuple[str, str]] = {
+    "INFRA-001": (
+        "cosign-policy.yaml",
+        """\
+# cosign-policy.yaml — Image signing admission policy
+# Deploy with Kyverno: kubectl apply -f cosign-policy.yaml
+# Customize: replace 'registry.example.com' with your registry.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-signed-images
+  annotations:
+    policies.kyverno.io/title: Require Signed Images
+    policies.kyverno.io/description: >-
+      All container images must be signed with Cosign before deployment.
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: check-image-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      verifyImages:
+        - imageReferences:
+            - "registry.example.com/*"  # TODO: update to your registry
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/YOUR_ORG/*"  # TODO: update
+                    issuer: "https://token.actions.githubusercontent.com"
+""",
+    ),
+    "INFRA-003": (
+        "pod-security-context.yaml",
+        """\
+# pod-security-context.yaml — Non-root security context for AI workload pods
+# Apply: kubectl apply -f pod-security-context.yaml
+# Customize: update 'name', 'namespace', and 'image' fields.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-workload  # TODO: update to your deployment name
+  namespace: default  # TODO: update to your namespace
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000      # TODO: match the UID of the process in your image
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ai-workload  # TODO: update to your container name
+          image: registry.example.com/ai-workload:latest  # TODO: update
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+""",
+    ),
+    "INFRA-005": (
+        "resource-limits.yaml",
+        """\
+# resource-limits.yaml — LimitRange and ResourceQuota for AI workload namespace
+# Apply: kubectl apply -f resource-limits.yaml -n <your-namespace>
+# Customize: tune cpu/memory values to your workload requirements.
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-workload-limits
+  namespace: default  # TODO: update to your namespace
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"       # TODO: tune for your workload
+        memory: "512Mi"   # TODO: tune for your workload
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-workload-quota
+  namespace: default  # TODO: update to your namespace
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: "16Gi"
+    limits.cpu: "16"
+    limits.memory: "32Gi"
+    pods: "20"
+""",
+    ),
+    "INFRA-006": (
+        "network-policy.yaml",
+        """\
+# network-policy.yaml — Default deny-all + selective allow for AI workloads
+# Apply: kubectl apply -f network-policy.yaml -n <your-namespace>
+# Customize: update selectors and ports to match your services.
+---
+# Default deny-all ingress and egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: default  # TODO: update to your namespace
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Allow AI agent pods to reach the LLM API and vector DB only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-agent-allow-egress
+  namespace: default  # TODO: update to your namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: ai-agent  # TODO: update to your pod label
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: vector-db  # TODO: update to your vector DB label
+      ports:
+        - protocol: TCP
+          port: 6333  # TODO: update to your vector DB port
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443  # Allow outbound HTTPS to LLM API
+---
+# Allow ingress to AI agent from API gateway only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-agent-allow-ingress
+  namespace: default  # TODO: update to your namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: ai-agent  # TODO: update to your pod label
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway  # TODO: update to your ingress source
+      ports:
+        - protocol: TCP
+          port: 8080  # TODO: update to your service port
+""",
+    ),
+    "INFRA-009": (
+        "agent-rbac.yaml",
+        """\
+# agent-rbac.yaml — Minimal ServiceAccount, Role, and RoleBinding for AI agent
+# Apply: kubectl apply -f agent-rbac.yaml -n <your-namespace>
+# Customize: update namespace, names, and permitted verbs/resources.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-agent-sa  # TODO: update to your service account name
+  namespace: default  # TODO: update to your namespace
+automountServiceAccountToken: false  # Mount explicitly only where needed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-agent-role
+  namespace: default  # TODO: update to your namespace
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+    # TODO: add only the resources and verbs your agent actually needs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-agent-rolebinding
+  namespace: default  # TODO: update to your namespace
+subjects:
+  - kind: ServiceAccount
+    name: ai-agent-sa  # TODO: must match ServiceAccount name above
+    namespace: default
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ai-agent-role
+""",
+    ),
+    "INFRA-007": (
+        "secret-volume-mount.yaml",
+        """\
+# secret-volume-mount.yaml — Mount secrets as files instead of env vars
+# Apply: kubectl apply -f secret-volume-mount.yaml -n <your-namespace>
+# Customize: update secret names, mount paths, and container name.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-workload  # TODO: update to your deployment name
+  namespace: default  # TODO: update to your namespace
+spec:
+  template:
+    spec:
+      volumes:
+        - name: api-credentials
+          secret:
+            secretName: ai-agent-api-creds  # TODO: update to your Secret name
+            defaultMode: 0440  # Owner+group read only
+      containers:
+        - name: ai-workload  # TODO: update to your container name
+          image: registry.example.com/ai-workload:latest  # TODO: update
+          volumeMounts:
+            - name: api-credentials
+              mountPath: /run/secrets/api-creds
+              readOnly: true
+          # The application reads secrets from /run/secrets/api-creds/<key>
+          # Remove any secretKeyRef entries from the env: section.
+""",
+    ),
+}
+
+
+def cmd_fix(args) -> dict:
+    """Generate a corrected infra config and K8s IaC snippets from an audit."""
+    import copy
+
+    audit_path = Path(args.audit)
+    if not audit_path.exists():
+        print(f"[error] Audit file not found: {args.audit}", file=sys.stderr)
+        sys.exit(1)
+    with open(audit_path) as f:
+        audit = json.load(f)
+
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"[error] Config file not found: {args.config}", file=sys.stderr)
+        sys.exit(1)
+    with open(config_path) as f:
+        original_config = json.load(f)
+
+    findings = audit.get("findings", [])
+    if not findings:
+        print("[*] No findings in audit — nothing to fix.")
+        return {}
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    iac_dir = output_dir / "iac"
+    iac_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build fixed config by applying patches from _INFRA_PATCHES
+    fixed_config = copy.deepcopy(original_config)
+    changes: list[dict] = []
+    seen_finding_ids: set[str] = set()
+
+    for finding in findings:
+        fid = finding.get("id", "")
+        if fid in seen_finding_ids:
+            continue
+        seen_finding_ids.add(fid)
+
+        patch = _INFRA_PATCHES.get(fid)
+        if not patch:
+            continue
+
+        kind = patch["kind"]
+        ftxt = finding.get("finding", "")
+
+        if kind == "workload":
+            m = _re.search(r"workload '([^']+)'", ftxt)
+            wname = m.group(1) if m else None
+            for w in fixed_config.get("workloads", []):
+                if wname is None or w.get("name") == wname:
+                    old_val = w.get(patch["field"], False)
+                    w[patch["field"]] = patch["value"]
+                    changes.append({
+                        "finding_id": fid,
+                        "severity": finding.get("severity", ""),
+                        "field": f"workloads[{w.get('name', '?')}].{patch['field']}",
+                        "old_value": old_val,
+                        "new_value": patch["value"],
+                        "remediation_note": finding.get("remediation", "")[:150],
+                    })
+        elif kind == "workload_limits":
+            m = _re.search(r"workload '([^']+)'", ftxt)
+            wname = m.group(1) if m else None
+            for w in fixed_config.get("workloads", []):
+                if wname is None or w.get("name") == wname:
+                    old_val = w.get("resource_limits", {})
+                    w.setdefault("resource_limits", {}).update({"cpu": "500m", "memory": "512Mi"})
+                    changes.append({
+                        "finding_id": fid,
+                        "severity": finding.get("severity", ""),
+                        "field": f"workloads[{w.get('name', '?')}].resource_limits",
+                        "old_value": old_val,
+                        "new_value": {"cpu": "500m", "memory": "512Mi"},
+                        "remediation_note": finding.get("remediation", "")[:150],
+                    })
+        elif kind == "config":
+            old_val = get_nested(fixed_config, patch["field"])
+            set_nested(fixed_config, patch["field"], patch["value"])
+            changes.append({
+                "finding_id": fid,
+                "severity": finding.get("severity", ""),
+                "field": patch["field"],
+                "old_value": old_val,
+                "new_value": patch["value"],
+                "remediation_note": finding.get("remediation", "")[:150],
+            })
+
+    # Write fixed config
+    fixed_config_path = output_dir / "infra_config.fixed.json"
+    with open(fixed_config_path, "w") as f:
+        json.dump(fixed_config, f, indent=2)
+
+    # Generate IaC snippets for findings present in the audit
+    iac_generated: list[dict] = []
+    seen_iac_ids: set[str] = set()
+    for finding in findings:
+        fid = finding.get("id", "")
+        if fid in seen_iac_ids:
+            continue
+        seen_iac_ids.add(fid)
+        snippet_info = _IAC_SNIPPETS.get(fid)
+        if not snippet_info:
+            continue
+        filename, content = snippet_info
+        snippet_path = iac_dir / filename
+        with open(snippet_path, "w") as f:
+            f.write(content)
+        iac_generated.append({
+            "finding_id": fid,
+            "severity": finding.get("severity", ""),
+            "control": finding.get("control", ""),
+            "iac_file": str(snippet_path),
+        })
+
+    report = {
+        "fix_timestamp": datetime.now(timezone.utc).isoformat(),
+        "audit_file": str(audit_path),
+        "original_config": str(config_path),
+        "fixed_config": str(fixed_config_path),
+        "output_dir": str(output_dir),
+        "findings_processed": len(findings),
+        "config_changes_applied": len(changes),
+        "iac_snippets_generated": len(iac_generated),
+        "config_changes": changes,
+        "iac_snippets": iac_generated,
+        "manual_findings": [
+            {"id": f.get("id"), "finding": f.get("finding"), "remediation": f.get("remediation")}
+            for f in findings
+            if f.get("id") in _INFRA_MANUAL
+        ],
+    }
+
+    report_path = output_dir / "fix_report.json"
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+
+    print(json.dumps(report, indent=2))
+    print(f"\n[*] Fixed config written to  : {fixed_config_path}", file=sys.stderr)
+    print(f"[*] IaC snippets written to  : {iac_dir}/", file=sys.stderr)
+    print(f"[*] Fix report written to    : {report_path}", file=sys.stderr)
+    if report["manual_findings"]:
+        print(f"[*] {len(report['manual_findings'])} finding(s) require manual remediation — see fix_report.json", file=sys.stderr)
+
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description="AI Workload Infrastructure Hardening Agent")
     sub = parser.add_subparsers(dest="subcommand", required=True)
@@ -607,6 +1002,11 @@ def main():
     p_rem.add_argument("--manifest", default=None,  help="Original deployment.json (for scan-k8s audits)")
     p_rem.add_argument("--output",   default=None,  help="Output file (default: <source>.patched.json)")
 
+    fix_p = sub.add_parser("fix", help="Generate corrected infra config and K8s IaC snippets")
+    fix_p.add_argument("--audit",      required=True, help="Path to infra_audit.json")
+    fix_p.add_argument("--config",     required=True, help="Path to original infra config JSON")
+    fix_p.add_argument("--output-dir", default="remediation-output")
+
     args = parser.parse_args()
     if args.subcommand == "scan":
         cmd_scan(args)
@@ -614,6 +1014,8 @@ def main():
         cmd_scan_k8s(args)
     elif args.subcommand == "remediate":
         cmd_remediate(args)
+    elif args.subcommand == "fix":
+        cmd_fix(args)
 
 
 if __name__ == "__main__":

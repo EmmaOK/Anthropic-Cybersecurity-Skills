@@ -5,13 +5,18 @@ AI Evaluation Security and Observability Hardening Agent
 Subcommands:
   audit-eval      — Audit eval pipeline config for security integrity.
   audit-telemetry — Audit telemetry/logging config for observability security.
+  fix-eval        — Generate corrected eval pipeline config from audit findings.
+  fix-telemetry   — Generate corrected telemetry config from audit findings.
 
 Usage:
     agent.py audit-eval      --config eval_config.json      [--output eval_audit.json]
     agent.py audit-telemetry --config telemetry_config.json [--output telemetry_audit.json]
+    agent.py fix-eval        --audit eval_audit.json --config eval_config.json [--output-dir remediation-output]
+    agent.py fix-telemetry   --audit telemetry_audit.json --config telemetry_config.json [--output-dir remediation-output]
 """
 
 import argparse
+import copy
 import json
 import sys
 from datetime import datetime, timezone
@@ -20,6 +25,7 @@ from pathlib import Path
 EVAL_CONTROLS: list[dict] = [
     {
         "id": "EVAL-001", "field": "benchmark_integrity.datasets_signed",
+        "field_path": ["benchmark_integrity", "datasets_signed"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Eval dataset integrity signing",
         "finding": "datasets_signed is false — eval datasets can be tampered to hide failures",
@@ -27,6 +33,7 @@ EVAL_CONTROLS: list[dict] = [
     },
     {
         "id": "EVAL-002", "field": "benchmark_integrity.results_tamper_evident",
+        "field_path": ["benchmark_integrity", "results_tamper_evident"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Tamper-evident eval results",
         "finding": "results_tamper_evident is false — evaluation results can be modified after the fact",
@@ -34,6 +41,7 @@ EVAL_CONTROLS: list[dict] = [
     },
     {
         "id": "EVAL-003", "field": "regression_testing.adversarial_regression",
+        "field_path": ["regression_testing", "adversarial_regression"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Adversarial regression testing",
         "finding": "adversarial_regression is false — model updates are not tested against adversarial scenarios",
@@ -41,6 +49,7 @@ EVAL_CONTROLS: list[dict] = [
     },
     {
         "id": "EVAL-004", "field": "regression_testing.post_update_required",
+        "field_path": ["regression_testing", "post_update_required"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Mandatory post-update evaluation",
         "finding": "post_update_required is false — model can be updated without running safety evaluation",
@@ -48,6 +57,7 @@ EVAL_CONTROLS: list[dict] = [
     },
     {
         "id": "EVAL-005", "field": "eval_infrastructure.isolated_from_production",
+        "field_path": ["eval_infrastructure", "isolated_from_production"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Eval infrastructure isolation",
         "finding": "isolated_from_production is false — eval infrastructure shares resources with production",
@@ -55,6 +65,7 @@ EVAL_CONTROLS: list[dict] = [
     },
     {
         "id": "EVAL-006", "field": "eval_infrastructure.access_controlled",
+        "field_path": ["eval_infrastructure", "access_controlled"],
         "check": lambda v: v is True, "severity": "MEDIUM",
         "control": "Eval infrastructure access control",
         "finding": "access_controlled is false — eval infrastructure accessible without authentication",
@@ -62,6 +73,7 @@ EVAL_CONTROLS: list[dict] = [
     },
     {
         "id": "EVAL-007", "field": "eval_infrastructure.redundant",
+        "field_path": ["eval_infrastructure", "redundant"],
         "check": lambda v: v is True, "severity": "MEDIUM",
         "control": "Eval infrastructure redundancy",
         "finding": "redundant is false — DoS on eval infrastructure would prevent safety evaluation",
@@ -99,6 +111,7 @@ EVAL_CONTROLS: list[dict] = [
 TELEMETRY_CONTROLS: list[dict] = [
     {
         "id": "TEL-001", "field": "logging.tamper_evident",
+        "field_path": ["logging", "tamper_evident"],
         "check": lambda v: v is True, "severity": "CRITICAL",
         "control": "Tamper-evident logging",
         "finding": "tamper_evident is false — logs can be modified to hide malicious agent behavior",
@@ -106,6 +119,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-002", "field": "logging.append_only",
+        "field_path": ["logging", "append_only"],
         "check": lambda v: v is True, "severity": "CRITICAL",
         "control": "Append-only log store",
         "finding": "append_only is false — log records can be deleted or modified",
@@ -113,6 +127,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-003", "field": "logging.pii_redaction",
+        "field_path": ["logging", "pii_redaction"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "PII redaction in logs",
         "finding": "pii_redaction is false — agent logs may expose PII from user interactions or retrieved documents",
@@ -120,6 +135,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-004", "field": "logging.access_controlled",
+        "field_path": ["logging", "access_controlled"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Log access control",
         "finding": "access_controlled is false — logs accessible without authentication",
@@ -127,6 +143,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-005", "field": "telemetry.integrity_check",
+        "field_path": ["telemetry", "integrity_check"],
         "check": lambda v: v is True, "severity": "CRITICAL",
         "control": "Telemetry pipeline integrity",
         "finding": "integrity_check is false — telemetry data can be poisoned to mask incidents",
@@ -134,6 +151,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-006", "field": "telemetry.authenticated_collectors",
+        "field_path": ["telemetry", "authenticated_collectors"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Authenticated telemetry collectors",
         "finding": "authenticated_collectors is false — any process can inject data into the telemetry pipeline",
@@ -141,6 +159,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-007", "field": "anomaly_detection.behavioral_baselines",
+        "field_path": ["anomaly_detection", "behavioral_baselines"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Behavioral baseline monitoring",
         "finding": "behavioral_baselines is false — cannot detect gradual goal drift or abnormal agent behavior patterns",
@@ -148,6 +167,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-008", "field": "anomaly_detection.tool_call_distribution_monitoring",
+        "field_path": ["anomaly_detection", "tool_call_distribution_monitoring"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Tool call distribution monitoring",
         "finding": "tool_call_distribution_monitoring is false — unusual tool invocation patterns go undetected",
@@ -155,6 +175,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-009", "field": "anomaly_detection.long_term_trend_analysis",
+        "field_path": ["anomaly_detection", "long_term_trend_analysis"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Long-term trend analysis",
         "finding": "long_term_trend_analysis is false — low-and-slow attacks that evade short-window detection go undetected",
@@ -162,6 +183,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-010", "field": "anomaly_detection.ml_based_detection",
+        "field_path": ["anomaly_detection", "ml_based_detection"],
         "check": lambda v: v is True, "severity": "MEDIUM",
         "control": "ML-based anomaly detection",
         "finding": "ml_based_detection is false — only rule-based detection in place; evasion of known rules is trivial",
@@ -169,6 +191,7 @@ TELEMETRY_CONTROLS: list[dict] = [
     },
     {
         "id": "TEL-011", "field": "observability_tools.isolated_from_agents",
+        "field_path": ["observability_tools", "isolated_from_agents"],
         "check": lambda v: v is True, "severity": "HIGH",
         "control": "Observability tool isolation from agents",
         "finding": "isolated_from_agents is false — agents can potentially influence or access their own monitoring systems",
@@ -190,6 +213,39 @@ def set_nested(obj: dict, path: str, value) -> None:
     for p in parts[:-1]:
         obj = obj.setdefault(p, {})
     obj[parts[-1]] = value
+
+
+def set_nested_path(d: dict, path: list, value) -> None:
+    """Set a value in a nested dict using a list path."""
+    for key in path[:-1]:
+        if key not in d or not isinstance(d[key], dict):
+            d[key] = {}
+        d = d[key]
+    d[path[-1]] = value
+
+
+def apply_fixes(config: dict, findings: list, controls: list) -> tuple:
+    """Apply findings to a deep copy of config; return (fixed_config, changes)."""
+    fixed = copy.deepcopy(config)
+    changes = []
+    ctrl_by_id = {c["id"]: c for c in controls}
+    for finding in findings:
+        ctrl = ctrl_by_id.get(finding.get("id"))
+        if not ctrl:
+            continue
+        path = ctrl.get("field_path")
+        if not path:
+            continue  # check_all controls (EVAL-008/009/010) have no single field_path
+        changes.append({
+            "finding_id": finding["id"],
+            "severity": finding["severity"],
+            "field": ".".join(str(p) for p in path),
+            "old_value": finding.get("current_value", finding.get("value_found", False)),
+            "new_value": True,
+            "remediation_note": ctrl["remediation"][:150],
+        })
+        set_nested_path(fixed, path, True)
+    return fixed, changes
 
 
 def run_controls(config: dict, controls: list[dict]) -> list[dict]:
@@ -462,6 +518,50 @@ def cmd_remediate(args) -> dict:
     return report
 
 
+def cmd_fix(args) -> None:
+    """Non-interactive fix: apply all audit findings to a copy of the config."""
+    import os
+    is_eval = args.subcommand == "fix-eval"
+    controls_to_use = EVAL_CONTROLS if is_eval else TELEMETRY_CONTROLS
+    findings_key = "eval_findings" if is_eval else "telemetry_findings"
+
+    audit_path = Path(args.audit)
+    if not audit_path.exists():
+        print(f"[error] Audit file not found: {args.audit}", file=sys.stderr)
+        sys.exit(1)
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"[error] Config not found: {args.config}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(audit_path) as f:
+        audit_data = json.load(f)
+    with open(config_path) as f:
+        original_config = json.load(f)
+
+    findings = audit_data.get(findings_key, audit_data.get("findings", []))
+    fixed_config, changes = apply_fixes(original_config, findings, controls_to_use)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    config_basename = os.path.basename(args.config)
+    fixed_path = os.path.join(args.output_dir, f"fixed_{config_basename}")
+    with open(fixed_path, "w") as f:
+        json.dump(fixed_config, f, indent=2)
+
+    summary = {
+        "fix_timestamp": datetime.now(timezone.utc).isoformat(),
+        "source_audit": args.audit,
+        "fixed_config_path": fixed_path,
+        "fixes_applied": len(changes),
+        "changes": changes,
+    }
+    summary_path = os.path.join(args.output_dir, "fix_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(json.dumps(summary, indent=2))
+    sys.exit(0)
+
+
 def main():
     parser = argparse.ArgumentParser(description="AI Evaluation Security and Observability Hardening Agent")
     sub = parser.add_subparsers(dest="subcommand", required=True)
@@ -479,6 +579,16 @@ def main():
     p_rem.add_argument("--config", required=True, help="Original config JSON to patch")
     p_rem.add_argument("--output", default=None,  help="Output file (default: <config>.patched.json)")
 
+    fix_eval_p = sub.add_parser("fix-eval", help="Generate corrected eval pipeline config")
+    fix_eval_p.add_argument("--audit", required=True)
+    fix_eval_p.add_argument("--config", required=True)
+    fix_eval_p.add_argument("--output-dir", default="remediation-output")
+
+    fix_tel_p = sub.add_parser("fix-telemetry", help="Generate corrected telemetry config")
+    fix_tel_p.add_argument("--audit", required=True)
+    fix_tel_p.add_argument("--config", required=True)
+    fix_tel_p.add_argument("--output-dir", default="remediation-output")
+
     args = parser.parse_args()
     if args.subcommand == "audit-eval":
         cmd_audit_eval(args)
@@ -486,6 +596,8 @@ def main():
         cmd_audit_telemetry(args)
     elif args.subcommand == "remediate":
         cmd_remediate(args)
+    elif args.subcommand in ("fix-eval", "fix-telemetry"):
+        cmd_fix(args)
 
 
 if __name__ == "__main__":

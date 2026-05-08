@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Agent for auditing Kubernetes Pod Security Standards enforcement."""
+"""Agent for auditing and implementing Kubernetes Pod Security Standards enforcement."""
 
 import json
 import argparse
 import subprocess
+import sys
 from datetime import datetime
 from collections import Counter
 
@@ -144,25 +145,83 @@ def generate_compliance_report(findings):
     }
 
 
+def apply_namespace_labels(namespace, level="restricted", dry_run=True):
+    """Apply PSS labels to a namespace via kubectl label."""
+    cmd = [
+        "kubectl", "label", "namespace", namespace,
+        f"pod-security.kubernetes.io/enforce={level}",
+        f"pod-security.kubernetes.io/audit={level}",
+        f"pod-security.kubernetes.io/warn={level}",
+        "--overwrite",
+    ]
+    if dry_run:
+        cmd += ["--dry-run=client"]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    return {
+        "namespace": namespace,
+        "level": level,
+        "dry_run": dry_run,
+        "success": result.returncode == 0,
+        "output": result.stdout.strip() or result.stderr.strip(),
+    }
+
+
+def apply_all_unprotected(ns_audit, level="baseline", dry_run=True, skip_system=True):
+    """Apply PSS labels to all unprotected namespaces."""
+    results = []
+    for ns in ns_audit:
+        if ns.get("protected"):
+            continue
+        if skip_system and ns.get("system"):
+            continue
+        results.append(apply_namespace_labels(ns["namespace"], level, dry_run))
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Kubernetes Pod Security Standards Agent")
     parser.add_argument("--pods", help="Pods JSON to audit")
-    parser.add_argument("--namespace", help="Namespace for label generation")
+    parser.add_argument("--namespace", help="Specific namespace to label (or 'all' for all unprotected)")
     parser.add_argument("--level", choices=["privileged", "baseline", "restricted"],
-                        default="restricted")
+                        default="baseline")
     parser.add_argument("--action", choices=["audit-ns", "audit-pods", "generate", "full"],
                         default="full")
+    parser.add_argument("--apply", action="store_true",
+                        help="Apply PSS labels to unprotected namespaces (requires kubectl access)")
+    parser.add_argument("--dry-run", action="store_true", default=True,
+                        help="Simulate apply without making changes (default: true)")
+    parser.add_argument("--no-dry-run", dest="dry_run", action="store_false",
+                        help="Actually apply changes to the cluster")
     parser.add_argument("--output", default="pss_report.json")
     args = parser.parse_args()
 
     report = {"generated_at": datetime.utcnow().isoformat(), "results": {}}
+    exit_code = 0
 
     if args.action in ("audit-ns", "full"):
         ns_audit = audit_namespace_labels()
         report["results"]["namespace_audit"] = ns_audit
         if isinstance(ns_audit, list):
-            unprotected = sum(1 for n in ns_audit if not n["protected"] and not n["system"])
-            print(f"[+] Namespaces: {unprotected} unprotected")
+            unprotected = [n for n in ns_audit if not n["protected"] and not n["system"]]
+            print(f"[+] Namespaces: {len(unprotected)} unprotected (non-system)")
+            if unprotected:
+                exit_code = 1
+                for ns in unprotected:
+                    print(f"    ✗ {ns['namespace']} — no PSS enforce label")
+
+            if args.apply:
+                dry_run = args.dry_run
+                mode = "DRY RUN" if dry_run else "APPLYING"
+                print(f"\n[{mode}] Setting level={args.level} on {len(unprotected)} namespaces")
+                if args.namespace and args.namespace != "all":
+                    apply_results = [apply_namespace_labels(args.namespace, args.level, dry_run)]
+                else:
+                    apply_results = apply_all_unprotected(ns_audit, args.level, dry_run)
+                report["results"]["apply_results"] = apply_results
+                for r in apply_results:
+                    status = "✓" if r["success"] else "✗"
+                    print(f"    {status} {r['namespace']} → {r['level']} {'(dry-run)' if dry_run else '(applied)'}")
 
     if args.action in ("audit-pods", "full") and args.pods:
         findings = audit_pod_security(args.pods)
@@ -170,15 +229,18 @@ def main():
         report["results"]["pod_audit"] = findings
         report["results"]["summary"] = summary
         print(f"[+] Pod violations: {summary['total_violations']}")
+        if summary["total_violations"]:
+            exit_code = 1
 
-    if args.action in ("generate", "full") and args.namespace:
+    if args.action in ("generate", "full") and args.namespace and not args.apply:
         labels = generate_namespace_labels(args.namespace, args.level)
         report["results"]["generated"] = labels
-        print(f"[+] Labels for {args.namespace}: {args.level}")
+        print(f"[+] Remediation command for {args.namespace}:\n    {labels['command']}")
 
     with open(args.output, "w") as f:
         json.dump(report, f, indent=2, default=str)
-    print(f"[+] Report saved to {args.output}")
+    print(f"\n[+] Report saved to {args.output}")
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,28 @@
       "env": {
         "PHANTOM_BURP_URL": "http://127.0.0.1:9877"
       }
+    },
+    "infra": {
+      "command": "python3",
+      "args": ["mcp/infra_mcp_server.py"]
+    },
+    "defectdojo": {
+      "command": "python3",
+      "args": ["mcp/defectdojo_mcp_server.py"],
+      "env": {
+        "DEFECTDOJO_URL": "http://localhost:8080",
+        "DEFECTDOJO_API_KEY": ""
+      }
+    },
+    "jira": {
+      "command": "python3",
+      "args": ["mcp/jira_mcp_server.py"],
+      "env": {
+        "JIRA_URL": "",
+        "JIRA_USER": "",
+        "JIRA_TOKEN": "",
+        "JIRA_PROJECT_KEY": "SEC"
+      }
     }
   }
 }

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Kill Phish — Outlook Add-in Manifest
+  Replace PHANTOM_URL with your Phantom server URL before deploying.
+  Deploy via: Microsoft 365 Admin Center → Settings → Integrated Apps → Upload custom app
+-->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+  xsi:type="MailApp">
+
+  <Id>a3f5c8d2-1e4b-4a9f-8c6d-2b7e3f9a1d5c</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Phantom Security Platform</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Kill Phish"/>
+  <Description DefaultValue="Report suspicious emails to Phantom for AI-powered investigation."/>
+  <IconUrl DefaultValue="https://PHANTOM_URL/static/killphish/icon-80.png"/>
+  <HighResolutionIconUrl DefaultValue="https://PHANTOM_URL/static/killphish/icon-80.png"/>
+  <SupportUrl DefaultValue="https://PHANTOM_URL"/>
+  <AppDomains>
+    <AppDomain>https://PHANTOM_URL</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+
+  <Requirements>
+    <Sets DefaultMinVersion="1.9">
+      <Set Name="Mailbox"/>
+    </Sets>
+  </Requirements>
+
+  <!-- Fallback for older Outlook clients -->
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://PHANTOM_URL/static/killphish/taskpane.html"/>
+        <RequestedHeight>220</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+
+  <Permissions>ReadWriteItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
+  </Rule>
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides"
+                    xsi:type="VersionOverridesV1_0">
+
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.9">
+        <bt:Set Name="Mailbox"/>
+      </bt:Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="MailHost">
+
+        <DesktopFormFactor>
+          <FunctionFile resid="FunctionFile.Url"/>
+
+          <!-- Button shown in the ribbon when reading a message -->
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="KillPhishGroup">
+                <Label resid="GroupLabel"/>
+                <Control xsi:type="Button" id="KillPhishButton">
+                  <Label resid="ButtonLabel"/>
+                  <Supertip>
+                    <Title resid="ButtonLabel"/>
+                    <Description resid="ButtonTooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16"  resid="Icon.16x16"/>
+                    <bt:Image size="32"  resid="Icon.32x32"/>
+                    <bt:Image size="80"  resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>KillPhishPane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                    <Title resid="ButtonLabel"/>
+                    <SupportsPinning>true</SupportsPinning>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16x16" DefaultValue="https://PHANTOM_URL/static/killphish/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://PHANTOM_URL/static/killphish/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://PHANTOM_URL/static/killphish/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="FunctionFile.Url"  DefaultValue="https://PHANTOM_URL/static/killphish/taskpane.html"/>
+        <bt:Url id="Taskpane.Url"      DefaultValue="https://PHANTOM_URL/static/killphish/taskpane.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GroupLabel"    DefaultValue="Security"/>
+        <bt:String id="ButtonLabel"   DefaultValue="Kill Phish"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="ButtonTooltip" DefaultValue="Report this email to Phantom for AI-powered phishing investigation."/>
+      </bt:LongStrings>
+    </Resources>
+
+  </VersionOverrides>
+</OfficeApp>

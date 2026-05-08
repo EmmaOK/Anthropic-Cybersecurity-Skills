@@ -34,7 +34,7 @@ web API       MCP + commands
 ---
 
 ## Layer 1 — Developer Security Assistant (Claude Code Enterprise)
-
+is 
 **What it does:** Developers get inline security assistance while writing code, without leaving their IDE.
 
 **How it works:**
@@ -173,3 +173,4 @@ web API       MCP + commands
 - Skill library is read-only at runtime — no write access from any Phantom service
 - CI/CD scripts run with least-privilege runner permissions
 - Audit logs from Phantom chat service retained per org data retention policy
+4

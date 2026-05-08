@@ -10,7 +10,9 @@ Usage:
 """
 
 import argparse
+import copy
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -161,6 +163,38 @@ def set_nested(obj: dict, path: str, value) -> None:
     for p in parts[:-1]:
         obj = obj.setdefault(p, {})
     obj[parts[-1]] = value
+
+
+def apply_fixes(config: dict, findings: list, controls: list) -> tuple:
+    """Return (fixed_config, changes_list).
+
+    Applies the correct value for each finding by consulting _MODEL_PATCHES,
+    falling back to True for any unrecognised boolean control.
+    """
+    fixed = copy.deepcopy(config)
+    changes = []
+    ctrl_by_id = {c["id"]: c for c in controls}
+    for finding in findings:
+        ctrl = ctrl_by_id.get(finding.get("id"))
+        if not ctrl:
+            continue
+        field_path = ctrl.get("field")
+        if not field_path:
+            continue
+        old_val = finding.get("value_found", finding.get("current_value", False))
+        # Use the pre-existing _MODEL_PATCHES table so REP-005 (exposed→False) is handled correctly
+        patch = _MODEL_PATCHES.get(finding["id"])
+        new_val = patch["value"] if patch else True
+        changes.append({
+            "finding_id": finding["id"],
+            "severity": finding["severity"],
+            "field": field_path,
+            "old_value": old_val,
+            "new_value": new_val,
+            "remediation_note": ctrl["remediation"][:150],
+        })
+        set_nested(fixed, field_path, new_val)
+    return fixed, changes
 
 
 def run_controls(config: dict, controls: list[dict]) -> list[dict]:
@@ -391,11 +425,52 @@ def main():
     p_rem.add_argument("--config", required=True, help="Original model API config JSON to patch")
     p_rem.add_argument("--output", default=None,  help="Output file (default: <config>.patched.json)")
 
+    fix_p = sub.add_parser("fix", help="Generate corrected config from audit output")
+    fix_p.add_argument("--audit",      required=True, help="Path to audit output JSON from the audit subcommand")
+    fix_p.add_argument("--config",     required=True, help="Path to the original config JSON that was audited")
+    fix_p.add_argument("--output-dir", default="remediation-output", help="Directory for output files")
+
     args = parser.parse_args()
     if args.subcommand == "audit":
         cmd_audit(args)
     elif args.subcommand == "remediate":
         cmd_remediate(args)
+    elif args.subcommand == "fix":
+        with open(args.audit) as f:
+            audit_data = json.load(f)
+        with open(args.config) as f:
+            original_config = json.load(f)
+
+        # Support both a flat 'findings' key and the audit's split extraction/reprogramming keys
+        findings = (
+            audit_data.get("findings")
+            or audit_data.get("extraction_findings", []) + audit_data.get("reprogramming_findings", [])
+        )
+        all_controls = EXTRACTION_CONTROLS + REPROGRAMMING_CONTROLS
+        fixed_config, changes = apply_fixes(original_config, findings, all_controls)
+
+        os.makedirs(args.output_dir, exist_ok=True)
+
+        config_basename = os.path.basename(args.config)
+        fixed_path = os.path.join(args.output_dir, f"fixed_{config_basename}")
+        with open(fixed_path, "w") as f:
+            json.dump(fixed_config, f, indent=2)
+
+        summary = {
+            "fix_timestamp": datetime.now(timezone.utc).isoformat(),
+            "source_audit": args.audit,
+            "source_config": args.config,
+            "fixed_config_path": fixed_path,
+            "total_findings": len(findings),
+            "fixes_applied": len(changes),
+            "changes": changes,
+        }
+        summary_path = os.path.join(args.output_dir, "fix_summary.json")
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+
+        print(json.dumps(summary, indent=2))
+        sys.exit(0)
 
 
 if __name__ == "__main__":

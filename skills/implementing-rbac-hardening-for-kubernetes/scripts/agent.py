@@ -206,15 +206,84 @@ def format_summary(role_findings, binding_findings, sa_findings):
     return severity_counts
 
 
+def generate_remediation_manifests(role_findings, binding_findings):
+    """Generate YAML manifests to remediate RBAC findings."""
+    manifests = []
+
+    for f in role_findings:
+        if f.get("type") == "wildcard_all":
+            manifests.append({
+                "finding": f,
+                "action": "review_and_replace",
+                "manifest": f"""# REMEDIATION: Replace wildcard ClusterRole '{f['role']}'
+# Review what this role actually needs and replace wildcards with specific verbs/resources.
+# Example least-privilege replacement:
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {f['role']}-hardened
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]   # Replace with actual resources needed
+  verbs: ["get", "list", "watch"]   # Replace with actual verbs needed
+""",
+                "command": f"kubectl edit clusterrole {f['role']}",
+            })
+
+    for f in binding_findings:
+        if f.get("type") == "cluster_admin_binding":
+            subject = f.get("subject", {})
+            manifests.append({
+                "finding": f,
+                "action": "remove_cluster_admin",
+                "manifest": f"""# REMEDIATION: Remove cluster-admin from {subject.get('name', 'unknown')}
+# Replace with a scoped role that grants only what is needed.
+# To remove the binding:
+# kubectl delete clusterrolebinding {f['binding']}
+""",
+                "command": f"kubectl delete clusterrolebinding {f['binding']}",
+            })
+
+    return manifests
+
+
+def apply_remediation(manifests, dry_run=True):
+    """Apply generated remediation commands."""
+    results = []
+    for item in manifests:
+        cmd_str = item.get("command", "")
+        if not cmd_str:
+            continue
+        parts = cmd_str.split()
+        if dry_run:
+            # Only run read-only equivalent
+            results.append({"command": cmd_str, "dry_run": True,
+                            "note": "Review manifest above and run command manually to apply"})
+        else:
+            result = subprocess.run(parts, capture_output=True, text=True, timeout=30)
+            results.append({
+                "command": cmd_str,
+                "dry_run": False,
+                "success": result.returncode == 0,
+                "output": result.stdout.strip() or result.stderr.strip(),
+            })
+    return results
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Kubernetes RBAC hardening audit agent")
+    parser = argparse.ArgumentParser(description="Kubernetes RBAC hardening audit and remediation agent")
     parser.add_argument("--namespace", "-n", help="Specific namespace to audit")
     parser.add_argument("--kubeconfig", help="Path to kubeconfig")
     parser.add_argument("--skip-roles", action="store_true")
     parser.add_argument("--skip-bindings", action="store_true")
     parser.add_argument("--skip-sa", action="store_true")
-    parser.add_argument("--output", "-o", help="Output JSON report")
+    parser.add_argument("--output", "-o", default="rbac_report.json", help="Output JSON report")
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--apply", action="store_true",
+                        help="Generate and optionally apply remediation manifests")
+    parser.add_argument("--no-dry-run", dest="dry_run", action="store_false",
+                        help="Actually apply remediation (default: dry-run only)")
+    parser.set_defaults(dry_run=True)
     args = parser.parse_args()
 
     if args.kubeconfig:
@@ -241,12 +310,27 @@ def main():
         ),
     }
 
-    if args.output:
-        with open(args.output, "w") as f:
-            json.dump(report, f, indent=2)
-        print(f"\n[+] Report saved to {args.output}")
-    elif args.verbose:
-        print(json.dumps(report, indent=2))
+    if args.apply:
+        manifests = generate_remediation_manifests(role_findings, binding_findings)
+        report["remediation_manifests"] = manifests
+        if manifests:
+            print(f"\n[+] Generated {len(manifests)} remediation manifests")
+            for m in manifests:
+                print(f"\n{'='*60}")
+                print(m["manifest"])
+            apply_results = apply_remediation(manifests, dry_run=args.dry_run)
+            report["apply_results"] = apply_results
+            mode = "DRY RUN" if args.dry_run else "APPLIED"
+            print(f"\n[{mode}] {len(apply_results)} remediation actions")
+
+    with open(args.output, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"\n[+] Report saved to {args.output}")
+
+    critical = severity_counts.get("CRITICAL", 0)
+    high = severity_counts.get("HIGH", 0)
+    if critical > 0 or high > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
