@@ -30,6 +30,35 @@ engagement:
   # Maximum engagement duration in seconds (default 1800 = 30 min)
   timeout: 1800
 
+# AI/LLM Security Testing (OWASP LLM Top 10 + Agentic Top 10 + MCP Top 10)
+# Add 'ai' to scope above to activate the AI specialist agent.
+ai_target:
+  # The LLM endpoint to test (Anthropic, OpenAI, HuggingFace, or REST)
+  # model_type: anthropic | openai | huggingface | rest
+  model_type: anthropic
+  model_name: claude-sonnet-4-6
+
+  # Human-readable label used in findings reports
+  target_label: "Production LLM Endpoint"
+
+  # Which OWASP LLM Top 10 risks to probe via Garak
+  # Options: all | comma-separated list e.g. "LLM01,LLM06,LLM07"
+  llm_risks: all
+
+  # MCP server to probe for OWASP MCP Top 10 risks (optional)
+  # mcp_server_url: http://mcp.internal:9000
+
+  # Agent memory store or conversation log for ASI03 memory poisoning scan (optional)
+  # memory_store_url: http://vectordb.internal:6333
+  # agent_log_file: /var/log/agent/conversations.jsonl
+
+  # Garak scan timeout in seconds (LLM probes can be slow — allow 10+ min for full scan)
+  garak_timeout: 900
+
+  # CI secret for AI target:
+  # ANTHROPIC_API_KEY or OPENAI_API_KEY — passed automatically from CI secrets above
+  # MCP_API_TOKEN                       — Bearer token for authenticated MCP servers
+
 output:
   # JSON machine-readable report
   json: reports/pentest_report.json
