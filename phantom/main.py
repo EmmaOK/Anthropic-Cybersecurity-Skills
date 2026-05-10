@@ -36,6 +36,16 @@ except ImportError:
 from skill_loader import search_skills, load_skill
 from executor import run_agent
 from tools import TOOLS
+from orchestrator import PhantomOrchestrator, spawn_agent_tool_def, get_agent_results_tool_def
+
+# Singleton orchestrator shared across the session
+_orchestrator: PhantomOrchestrator | None = None
+
+def get_orchestrator() -> PhantomOrchestrator:
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = PhantomOrchestrator()
+    return _orchestrator
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -74,7 +84,11 @@ _BASE = (
     "Use generate_diagram whenever the user asks for a visual diagram, map, attack path, threat tree, "
     "or architecture chart — always produce valid Mermaid syntax. "
     "You are concise, technically precise, and treat the user as a capable security professional. "
-    "This assistant is for authorized lab environments and personal learning only."
+    "You have direct access to a Kali Linux VM (192.168.64.2) via the kali_exec tool. "
+    "When a user asks to scan, enumerate, exploit, or test a target, use kali_exec to run the "
+    "appropriate Kali tool rather than just describing commands. Always confirm the target and "
+    "command with the user before executing. This assistant is for authorized lab environments "
+    "and personal learning only."
 )
 
 PERSONAS: dict[str, str] = {
@@ -148,14 +162,15 @@ BANNER = """
  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
 
  Adaptive Cybersecurity AI  |  796 Skills  |  8 Modes  |  Claude-Opus-4-6
- Image analysis: /attach <file>   Diagram generation: ask naturally
- Type /modes to list modes, /help for all commands, exit to quit.
+ Kali VM: 192.168.64.2  |  Docker: ephemeral containers  |  Multi-agent: /engage
+ Type /modes to list modes, /help for all commands, /engage to start an engagement.
 """
 
 HELP_TEXT = """
 Commands:
-  /mode <name>       Switch persona — e.g. /mode ai-security
+  /mode <name>       Switch persona — e.g. /mode red-team
   /modes             List all available modes
+  /kali              Check Kali VM connectivity (192.168.64.2)
   /attach <path>     Attach an image (PNG/JPG/GIF/WEBP) to your next message
                      e.g. /attach ~/Desktop/network.png
                      then: "analyse this for lateral movement paths"
@@ -163,6 +178,16 @@ Commands:
   /load <name>       Load a session — e.g. /load lab-recon
   /sessions          List all saved sessions
   exit / quit        Auto-save and exit
+
+Kali & Docker:
+  /kali              Check UTM VM (192.168.64.2) connectivity
+  /docker            Check Docker + phantom-kali image status
+  Ask naturally to run tools: "nmap 10.10.10.5", "nuclei against https://lab.local"
+
+Multi-agent engagement:
+  /engage <scope>    Start autonomous multi-agent engagement
+                     e.g. /engage pentest 10.10.10.0/24, web + AD scope
+  /agents            Show all agent statuses and tree
 
 Diagram generation:
   Ask naturally — "draw a network diagram", "generate an attack path",
@@ -293,6 +318,45 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
         print(f"\n[Phantom] File written: {target}")
         return f"File successfully written to: {target}"
 
+    elif tool_name == "kali_docker_exec":
+        from kali_docker import run_in_container, docker_available
+        command = tool_input.get("command", "")
+        timeout = int(tool_input.get("timeout", 120))
+        network = tool_input.get("network", "host")
+        if not docker_available():
+            return "[Error] Docker is not running. Start Docker Desktop and try again."
+        print(f"\n[Phantom/Docker] $ {command}")
+        result = run_in_container(command, timeout=timeout, network=network)
+        if result["error"]:
+            return f"[Error] {result['error']}"
+        output = f"[Container: {result['container_id']} | Image: {result['image']}]\n"
+        output += result["stdout"]
+        if result["stderr"]:
+            output += f"\n[stderr]\n{result['stderr']}"
+        if result["exit_code"] != 0:
+            output += f"\n[Exit code: {result['exit_code']}]"
+        return output.strip() or "[No output]"
+
+    elif tool_name == "kali_exec":
+        # In CI environments redirect to Docker executor automatically
+        if os.environ.get("PHANTOM_EXECUTOR") == "docker":
+            return dispatch_tool("kali_docker_exec", tool_input)
+        from kali import run_on_kali, kali_reachable
+        command = tool_input.get("command", "")
+        timeout = int(tool_input.get("timeout", 120))
+        if not kali_reachable():
+            return "[Error] Kali VM (192.168.64.2) is unreachable. Make sure it is running in UTM."
+        print(f"\n[Phantom/Kali] $ {command}")
+        result = run_on_kali(command, timeout=timeout)
+        if result["error"]:
+            return f"[Error] {result['error']}"
+        output = result["stdout"]
+        if result["stderr"]:
+            output += f"\n[stderr]\n{result['stderr']}"
+        if result["exit_code"] != 0:
+            output += f"\n[Exit code: {result['exit_code']}]"
+        return output.strip() or "[No output]"
+
     elif tool_name == "generate_diagram":
         title = tool_input.get("title", "diagram")
         mermaid_source = tool_input.get("mermaid_source", "")
@@ -334,6 +398,23 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
         except subprocess.TimeoutExpired:
             return f"Mermaid source saved to {mmd_path}. PNG render timed out."
 
+    elif tool_name == "spawn_agent":
+        orch = get_orchestrator()
+        agent_id = orch.spawn_agent(
+            agent_type=tool_input.get("agent_type", "recon"),
+            task=tool_input.get("task", ""),
+            targets=tool_input.get("targets", []),
+            context=tool_input.get("context", ""),
+            depth=0,
+        )
+        return f"Agent spawned: {agent_id}. Use get_agent_results to poll status."
+
+    elif tool_name == "get_agent_results":
+        orch = get_orchestrator()
+        req = tool_input.get("agent_id")
+        result = orch.get_result(req) if req else orch.get_all_results()
+        return json.dumps(result, indent=2)
+
     return f"[Error] Unknown tool: {tool_name}"
 
 
@@ -351,7 +432,7 @@ def run_turn(client: anthropic.Anthropic, messages: list, system_prompt: str) ->
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=system_prompt,
-            tools=TOOLS,
+            tools=TOOLS + [spawn_agent_tool_def(), get_agent_results_tool_def()],
             messages=messages,
         )
 
@@ -461,6 +542,47 @@ def handle_slash_command(
             print(f"\nSaved sessions ({len(sessions)}):")
             for s in sessions:
                 print(f"  {s['name']:30s}  mode={s['mode']:15s}  msgs={s['messages']:3d}  {s['created_at'][:19]}")
+        return messages, current_mode, True, pending_image
+
+    if command == "/engage":
+        if not arg:
+            print("[Phantom] Usage: /engage <scope description>")
+            print("  Example: /engage pentest 10.10.10.0/24 — web, AD, and cloud scope")
+        else:
+            orch = get_orchestrator()
+            orch.reset()
+            agent_id = orch.spawn_agent(
+                agent_type="recon",
+                task=f"Initial recon for engagement: {arg}",
+                context=f"Engagement scope: {arg}. This is the entry-point recon pass. "
+                        "Discover all hosts, services, and attack surfaces. "
+                        "Spawn specialist agents based on what you find.",
+            )
+            print(f"\n[Phantom] Engagement started. Entry recon agent: {agent_id}")
+            print("[Phantom] Use /agents to monitor progress. Agents run in background.")
+        return messages, current_mode, True, pending_image
+
+    if command == "/agents":
+        orch = get_orchestrator()
+        print(orch.summary())
+        return messages, current_mode, True, pending_image
+
+    if command == "/docker":
+        from kali_docker import status as docker_status
+        s = docker_status()
+        print(f"\n[Phantom/Docker] Docker available : {s['docker_available']}")
+        print(f"[Phantom/Docker] phantom-kali built: {s['phantom_image_built']}")
+        if not s['phantom_image_built']:
+            print(f"\n  Build command:\n  {s['build_command']}")
+        return messages, current_mode, True, pending_image
+
+    if command == "/kali":
+        from kali import kali_reachable, KALI_HOST
+        print(f"[Phantom] Checking Kali VM ({KALI_HOST})...", end=" ", flush=True)
+        if kali_reachable():
+            print("online")
+        else:
+            print("UNREACHABLE — start the VM in UTM")
         return messages, current_mode, True, pending_image
 
     if command == "/help":

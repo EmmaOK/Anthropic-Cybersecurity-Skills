@@ -154,6 +154,83 @@ TOOLS = [
         },
     },
     {
+        "name": "kali_exec",
+        "description": (
+            "Execute a shell command directly on the Kali Linux VM (192.168.64.2) via SSH. "
+            "Use this to run any security tool installed on Kali: nmap, masscan, amass, subfinder, "
+            "dnsx, httpx, nuclei, whatweb, wafw00f, nikto, gobuster, feroxbuster, ffuf, wfuzz, "
+            "sqlmap, commix, msfconsole, msfvenom, searchsploit, hydra, medusa, john, hashcat, "
+            "crunch, cewl, aircrack-ng, airodump-ng, kismet, bully, reaver, wifite, "
+            "wireshark (tshark), tcpdump, ettercap, responder, scapy, mitmproxy, bettercap, "
+            "bloodhound-python, netexec, impacket-secretsdump, impacket-psexec, ldapsearch, "
+            "evil-winrm, certipy-ad, autopsy, binwalk, gdb, radare2, ghidra, "
+            "burpsuite, zaproxy, aws, pacu, vol (volatility3). "
+            "Only use in authorized lab or personal learning environments. "
+            "Always confirm the target and full command with the user before executing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "Shell command to run on Kali. "
+                        "Examples: 'nmap -sV -p 80,443 10.10.10.5', "
+                        "'sqlmap -u \"http://lab.local/login\" --batch --level 3', "
+                        "'hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://10.10.10.5', "
+                        "'nuclei -u https://target.lab -severity high,critical'"
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Timeout in seconds. Default 120. Use higher values (300-600) "
+                        "for full port scans, brute-force, or nuclei template runs."
+                    ),
+                },
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "kali_docker_exec",
+        "description": (
+            "Run a command in an ephemeral, isolated Kali Linux Docker container. "
+            "The container is destroyed after the command completes — ideal for clean, "
+            "per-engagement isolation where you don't want tool state bleeding between scans. "
+            "Uses phantom-kali:latest (pre-built image with all tools). Falls back to "
+            "kalilinux/kali-rolling if the image hasn't been built yet. "
+            "Use this instead of kali_exec when: running parallel scans that need isolation, "
+            "testing destructive or noisy tools, or when a fresh environment is required. "
+            "Same tool inventory as kali_exec: nmap, nuclei, sqlmap, hydra, msfconsole, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "Shell command to run inside the container. "
+                        "Example: 'nmap -sV -p- --open 10.10.10.5 -oN /workspace/scan.txt'"
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default 120, max 600).",
+                },
+                "network": {
+                    "type": "string",
+                    "enum": ["host", "bridge", "none"],
+                    "description": (
+                        "Docker network mode. 'host' for full network access (default), "
+                        "'bridge' for isolated NAT, 'none' for air-gapped execution."
+                    ),
+                },
+            },
+            "required": ["command"],
+        },
+    },
+    {
         "name": "request_approval",
         "description": (
             "Submit a proposed IR containment, eradication, or recovery action for human approval "

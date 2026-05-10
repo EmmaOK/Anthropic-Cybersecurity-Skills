@@ -1,0 +1,59 @@
+# phantom/ci_config_example.yml
+# Pentest configuration for phantom_ci.py
+# Use with: python phantom/phantom_ci.py --config phantom/ci_config_example.yml
+
+engagement:
+  name: "My App — Staging Pentest"
+
+  # Targets: URLs, IPs, or CIDR ranges
+  targets:
+    - https://staging.myapp.com
+    - https://staging-api.myapp.com
+
+  # Scope determines which specialist agents are spawned
+  # Options: web, api, ad, cloud, full
+  # web   → recon + webapp agents
+  # api   → recon + webapp agents (API-focused)
+  # ad    → recon + AD agents
+  # cloud → cloud agent
+  # full  → all agents
+  scope:
+    - web
+    - api
+
+  # Severity threshold that blocks deploy
+  # CRITICAL — only block on critical findings (permissive)
+  # HIGH      — block on high or critical (recommended)
+  # MEDIUM    — block on medium and above (strict)
+  fail_threshold: HIGH
+
+  # Maximum engagement duration in seconds (default 1800 = 30 min)
+  timeout: 1800
+
+output:
+  # JSON machine-readable report
+  json: reports/pentest_report.json
+
+  # SARIF for GitHub Security tab (auto-generated when GITHUB_ACTIONS=true)
+  sarif: reports/pentest.sarif
+
+  # Markdown human-readable summary
+  markdown: reports/pentest_report.md
+
+# Required CI secret:
+# ANTHROPIC_API_KEY          — Claude API key
+
+# DefectDojo (recommended — central findings tracker):
+# DEFECTDOJO_URL             — http://defectdojo.internal:8080
+# DEFECTDOJO_API_KEY         — token from DefectDojo user profile
+# DEFECTDOJO_PRODUCT_ID      — integer product ID (find in DefectDojo URL)
+
+# Jira (optional — auto-create tickets for HIGH/CRITICAL):
+# JIRA_URL                   — https://yourorg.atlassian.net
+# JIRA_USER                  — your-email@org.com
+# JIRA_TOKEN                 — Jira API token
+# JIRA_PROJECT               — project key e.g. SEC
+
+# Google Chat (optional — post summary to a space):
+# GOOGLE_CHAT_WEBHOOK_URL    — https://chat.googleapis.com/v1/spaces/.../messages?key=...
+#   Get it from: Google Chat space → Apps & Integrations → Manage webhooks

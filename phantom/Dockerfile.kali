@@ -1,0 +1,30 @@
+FROM kalilinux/kali-rolling
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nmap masscan amass subfinder dnsx httpx whatweb wafw00f arp-scan netdiscover \
+    nikto gobuster feroxbuster ffuf wfuzz sqlmap commix davtest \
+    metasploit-framework exploitdb \
+    hydra medusa john hashcat crunch cewl wordlists \
+    tshark tcpdump responder scapy mitmproxy bettercap \
+    bloodhound.py netexec impacket-scripts ldap-utils evil-winrm certipy-ad \
+    binwalk gdb radare2 strings exiftool \
+    awscli pacu \
+    zaproxy \
+    python3-pip curl wget git unzip jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# nuclei — ARM64 binary
+RUN LATEST=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest \
+        | grep tag_name | cut -d'"' -f4) \
+    && wget -q "https://github.com/projectdiscovery/nuclei/releases/download/${LATEST}/nuclei_${LATEST#v}_linux_arm64.zip" \
+       -O /tmp/nuclei.zip \
+    && unzip -q /tmp/nuclei.zip nuclei -d /usr/local/bin/ \
+    && rm /tmp/nuclei.zip \
+    && chmod +x /usr/local/bin/nuclei
+
+# volatility3
+RUN pip3 install volatility3 --break-system-packages --quiet
+
+WORKDIR /workspace

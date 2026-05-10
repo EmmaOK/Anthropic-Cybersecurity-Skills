@@ -1,0 +1,114 @@
+image: python:3.12-slim
+
+definitions:
+
+  # ── Reusable step: build or pull phantom-kali Docker image ────────────────
+  steps:
+    - step: &build-phantom-kali
+        name: Build phantom-kali Docker image
+        image: docker:27
+        services: [docker]
+        caches: [docker]
+        script:
+          - docker pull ghcr.io/emmanuelokonkwo/phantom-kali:latest
+              && docker tag ghcr.io/emmanuelokonkwo/phantom-kali:latest phantom-kali:latest
+              || docker build -t phantom-kali:latest -f phantom/Dockerfile.kali phantom/
+
+    - step: &phantom-pentest
+        name: Phantom Pentest — CD Staging Gate
+        image: python:3.12-slim
+        services: [docker]
+        caches: [pip, docker]
+        artifacts:
+          - reports/**
+        script:
+          - pip install --quiet anthropic httpx pyyaml
+          - >
+            python phantom/phantom_ci.py
+            --target "$STAGING_TARGET_URL"
+            --scope "${PENTEST_SCOPE:-web,api}"
+            --threshold "${FAIL_THRESHOLD:-HIGH}"
+            --timeout "${PENTEST_TIMEOUT:-1800}"
+            --output reports/pentest_report.json
+            --sarif reports/pentest.sarif
+        after-script:
+          # Always upload report even if pentest step fails
+          # Environment variables — set these in Bitbucket repository settings → Repository variables:
+          # ANTHROPIC_API_KEY, DEFECTDOJO_URL, DEFECTDOJO_API_KEY, DEFECTDOJO_PRODUCT_ID,
+          # JIRA_URL, JIRA_USER, JIRA_TOKEN, JIRA_PROJECT, GOOGLE_CHAT_WEBHOOK_URL
+          - pipe: atlassian/bitbucket-upload-file:0.1.6
+            variables:
+              BITBUCKET_USERNAME: $BITBUCKET_USERNAME
+              BITBUCKET_APP_PASSWORD: $BITBUCKET_APP_PASSWORD
+              FILENAME: "reports/pentest_report.json"
+
+# ── Pipeline definitions ───────────────────────────────────────────────────
+
+pipelines:
+
+  # Triggered manually for on-demand pentests
+  custom:
+    phantom-pentest:
+      - variables:
+          - name: STAGING_TARGET_URL
+            description: "Target URL or IP range to pentest"
+          - name: PENTEST_SCOPE
+            default: "web,api"
+            description: "Comma-separated: web,api,ad,cloud,full"
+          - name: FAIL_THRESHOLD
+            default: "HIGH"
+            description: "Severity that fails the pipeline: CRITICAL, HIGH, MEDIUM"
+          - name: PENTEST_TIMEOUT
+            default: "1800"
+            description: "Max scan time in seconds"
+      - step: *build-phantom-kali
+      - step: *phantom-pentest
+
+  # CD pipeline: build → deploy to staging → pentest gate → promote
+  branches:
+    main:
+      - stage:
+          name: Build & Test
+          steps:
+            - step:
+                name: Build
+                script:
+                  - echo "Your build steps here"
+
+      - stage:
+          name: Deploy to Staging
+          deployment: staging
+          steps:
+            - step:
+                name: Deploy
+                script:
+                  - echo "Your staging deploy steps here"
+
+      - stage:
+          name: Security Gate
+          steps:
+            - step: *build-phantom-kali
+            - step:
+                <<: *phantom-pentest
+                name: Phantom Pentest — Staging Gate
+
+      - stage:
+          name: Promote to Production
+          trigger: manual          # Manual approval after pentest passes
+          deployment: production
+          steps:
+            - step:
+                name: Deploy to Production
+                script:
+                  - echo "Your production deploy steps here"
+
+# ── Services ──────────────────────────────────────────────────────────────
+
+definitions:
+  services:
+    docker:
+      memory: 4096
+
+  caches:
+    pip: ~/.cache/pip
+    docker: /var/lib/docker
