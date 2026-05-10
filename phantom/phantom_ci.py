@@ -277,7 +277,7 @@ def _extract_json(text: str) -> dict:
 # Output writers
 # ---------------------------------------------------------------------------
 
-def write_json_report(findings: dict, config: dict, path: str):
+def write_json_report(findings: dict, config: dict, path: str, scorecard: dict | None = None):
     report = {
         "tool": "Phantom CI",
         "version": "1.0.0",
@@ -286,12 +286,14 @@ def write_json_report(findings: dict, config: dict, path: str):
         "engagement": config.get("engagement", {}),
         **findings,
     }
+    if scorecard:
+        report["scorecard"] = scorecard
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(report, indent=2))
     print(f"[phantom-ci] JSON report → {path}")
 
 
-def write_markdown_summary(findings: dict, path: str):
+def write_markdown_summary(findings: dict, path: str, scorecard: dict | None = None):
     summary = findings.get("summary", {})
     items = findings.get("findings", [])
     lines = [
@@ -307,8 +309,14 @@ def write_markdown_summary(findings: dict, path: str):
         f"| 🟡 MEDIUM   | {summary.get('medium', 0)} |",
         f"| 🟢 LOW      | {summary.get('low', 0)} |",
         f"| ℹ INFO     | {summary.get('info', 0)} |",
-        "\n## Findings",
+        "",
     ]
+
+    if scorecard:
+        from reports.scorecard import render_markdown_scorecard
+        lines.append(render_markdown_scorecard(scorecard))
+
+    lines.append("\n## Findings")
     for f in sorted(items, key=lambda x: SEVERITY_ORDER.get(x.get("severity", "INFO"), 0), reverse=True):
         lines += [
             f"### [{f.get('severity')}] {f.get('title')}",
@@ -669,11 +677,24 @@ def main():
     print(f"[phantom-ci] Decision : {summary.get('recommendation', 'UNKNOWN')}")
     print(f"[phantom-ci] ─────────────────────────────────────")
 
+    # Build scorecard
+    scorecard = None
+    try:
+        from reports.scorecard import build_scorecard, render_html
+        scorecard = build_scorecard(findings, config)
+        sc_html_path = json_path.replace(".json", "_scorecard.html") if json_path else "reports/scorecard.html"
+        Path(sc_html_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(sc_html_path).write_text(render_html(scorecard))
+        ov = scorecard["overall"]
+        print(f"[phantom-ci] Scorecard      : Grade {ov['grade']} ({ov['score']}/100) → {sc_html_path}")
+    except Exception as e:
+        print(f"[phantom-ci] Scorecard generation failed: {e}", file=sys.stderr)
+
     # Write reports
     if json_path:
-        write_json_report(findings, config, json_path)
+        write_json_report(findings, config, json_path, scorecard=scorecard)
     if md_path:
-        write_markdown_summary(findings, md_path)
+        write_markdown_summary(findings, md_path, scorecard=scorecard)
 
     # SARIF (GitHub)
     if IS_GITHUB and sarif_path:
