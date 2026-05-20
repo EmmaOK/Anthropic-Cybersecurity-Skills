@@ -55,9 +55,11 @@ try:
     from burp import IBurpExtender, ITab
     from java.lang import System
     BURP_PORT = int(System.getenv("PHANTOM_BURP_PORT") or "9877")
+    _IN_BURP = True
 except ImportError:
     # Running outside Burp for testing
     BURP_PORT = 9877
+    _IN_BURP = False
 
 EXTENSION_NAME = "Phantom MCP"
 _callbacks = None
@@ -325,10 +327,17 @@ class PhantomHandler(BaseHTTPRequestHandler):
             elif encoding == "url":
                 decoded = unquote(value)
             elif encoding == "hex":
-                decoded = bytes.fromhex(value).decode("utf-8", errors="replace")
+                decoded = value.decode("hex").decode("utf-8", errors="replace") if hasattr(value, "decode") else bytes.fromhex(value).decode("utf-8", errors="replace")
             elif encoding == "html":
-                import html
-                decoded = html.unescape(value)
+                try:
+                    import html
+                    decoded = html.unescape(value)
+                except ImportError:
+                    try:
+                        from HTMLParser import HTMLParser
+                        decoded = HTMLParser().unescape(value)
+                    except Exception:
+                        decoded = value
             else:
                 decoded = value
             self._send_json({"encoding": encoding, "input": value, "output": decoded})
@@ -365,26 +374,33 @@ class BurpExtender(IBurpExtender):
         _helpers   = callbacks.getHelpers()
 
         callbacks.setExtensionName(EXTENSION_NAME)
-        callbacks.printOutput(f"[Phantom] Starting MCP bridge on port {BURP_PORT}...")
+        callbacks.printOutput("[Phantom] Starting MCP bridge on port {}...".format(BURP_PORT))
 
         # Start HTTP server in daemon thread
-        server = HTTPServer(("127.0.0.1", BURP_PORT), PhantomHandler)
+        try:
+            server = HTTPServer(("127.0.0.1", BURP_PORT), PhantomHandler)
+        except Exception as e:
+            callbacks.printError(
+                "[Phantom] ERROR: Could not bind to port {} — {}.\n"
+                "[Phantom] Restart Burp Suite to release the port, then reload this extension.".format(BURP_PORT, e)
+            )
+            return
         t = threading.Thread(target=server.serve_forever)
         t.daemon = True
         t.name   = "PhantomMCPBridge"
         t.start()
 
         callbacks.printOutput(
-            f"[Phantom] MCP bridge running at http://127.0.0.1:{BURP_PORT}\n"
-            f"[Phantom] Register burp_pentest_mcp_server.py in .mcp.json to connect Phantom."
+            "[Phantom] MCP bridge running at http://127.0.0.1:{}\n"
+            "[Phantom] Register burp_pentest_mcp_server.py in .mcp.json to connect Phantom.".format(BURP_PORT)
         )
 
 
 # ── Standalone test (run outside Burp to verify HTTP server logic) ─────────────
 
-if __name__ == "__main__":
-    print(f"Running standalone test server on port {BURP_PORT} (no Burp callbacks)")
-    print("This verifies the HTTP server starts — Burp callbacks will be None.")
+if not _IN_BURP:
+    print("Running standalone test server on port {} (no Burp callbacks)".format(BURP_PORT))
+    print("This verifies the HTTP server starts -- Burp callbacks will be None.")
 
     class _MockCallbacks:
         def getProxyHistory(self): return []
@@ -405,5 +421,5 @@ if __name__ == "__main__":
     _helpers   = _MockHelpers()
 
     srv = HTTPServer(("127.0.0.1", BURP_PORT), PhantomHandler)
-    print(f"Server running at http://127.0.0.1:{BURP_PORT} — Ctrl+C to stop")
+    print("Server running at http://127.0.0.1:{} -- Ctrl+C to stop".format(BURP_PORT))
     srv.serve_forever()
