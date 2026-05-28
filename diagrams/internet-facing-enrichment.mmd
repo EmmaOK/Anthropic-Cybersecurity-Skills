@@ -1,0 +1,26 @@
+flowchart LR
+    INSP["Inspector v2\nFindings"] --> ENRICH["Enrichment Layer"]
+
+    subgraph ENRICH["Internet-Facing Enrichment"]
+        direction TB
+        NR["Inspector\nnetworkReachability\n(IGW in path?)"]
+        EC2CHK["EC2 Metadata\nPublic IP + IGW route\n+ SG 0.0.0.0/0"]
+        LBCHK["Load Balancer\nScheme: internet-facing\n+ target group?"]
+        LAMBCHK["Lambda\nFunction URL?\nAPI GW trigger?"]
+        EXTCHK["External Validation\nShodan / Censys\nconfirm reachability"]
+    end
+
+    ENRICH --> TAG{"is_internet_facing\n= true / false"}
+
+    TAG -->|true| SLA50["SLA cut by 50%\n14d → 7d Critical\n30d → 15d High"]
+    TAG -->|true| SCORE["Priority score\n× 2.0 multiplier"]
+    TAG -->|false| STD["Standard SLA\nStandard score"]
+
+    SLA50 --> BACKLOG["Prioritized\nRemediation Backlog"]
+    SCORE --> BACKLOG
+    STD --> BACKLOG
+
+    style ENRICH fill:#0f3460,stroke:#e94560,color:#fff
+    style TAG fill:#e94560,stroke:#fff,color:#fff
+    style SLA50 fill:#c0392b,stroke:#fff,color:#fff
+    style SCORE fill:#c0392b,stroke:#fff,color:#fff

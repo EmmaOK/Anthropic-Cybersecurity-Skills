@@ -1,0 +1,17 @@
+flowchart TD
+    H["🧠 1. Formulate Hypothesis\nBased on intel, ATT&CK gaps,\nor anomaly triggers"]
+    D["📊 2. Identify Data Sources\nMap ATT&CK technique to\nrequired telemetry"]
+    Q["🔍 3. Execute Queries\nKQL, EQL, SPL, VQL, osquery\nacross SIEM/EDR"]
+    A["🔬 4. Analyze Results\nCorrelate across hosts,\nusers, network, time"]
+    V["✅ 5. Validate Findings\nTrue positive vs. benign?\nDiamond Model analysis"]
+    O["📝 6. Operationalize\nConvert hunt queries → detection rules\nUpdate ATT&CK Navigator coverage"]
+
+    H --> D --> Q --> A --> V --> O
+    O -->|"Feed new intel\nback into next cycle"| H
+
+    style H fill:#e94560,stroke:#fff,color:#fff
+    style D fill:#0f3460,stroke:#fff,color:#fff
+    style Q fill:#0f3460,stroke:#fff,color:#fff
+    style A fill:#0f3460,stroke:#fff,color:#fff
+    style V fill:#0f3460,stroke:#fff,color:#fff
+    style O fill:#e94560,stroke:#fff,color:#fff

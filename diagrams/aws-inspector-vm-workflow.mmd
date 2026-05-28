@@ -1,0 +1,48 @@
+flowchart TD
+    subgraph AWS["AWS Inspector v2"]
+        EC2["EC2 Instances"]
+        ECR["ECR Images"]
+        LAMBDA["Lambda Functions"]
+        INSP["Inspector Findings"]
+        EC2 --> INSP
+        ECR --> INSP
+        LAMBDA --> INSP
+    end
+
+    subgraph PHANTOM["Phantom Augmentation Layer"]
+        direction TB
+        REPORT["📊 Findings Reporter\n• Monthly aggregation\n• Multi-region/account\n• KEV + EPSS enrichment"]
+        PRIORITIZE["🎯 Remediation Prioritization\n• Composite risk score\n• Patch-one-fix-many\n• Team-split backlogs"]
+        EPSS["🔮 EPSS Intelligence\n• Exploitation probability\n• Spike detection\n• P0-P4 assignment"]
+        SLA["⏱️ SLA & Aging Tracker\n• Adaptive SLAs\n• Auto-escalation\n• KPI dashboards"]
+        CSPM["🛡️ CSPM Extension\n• Security Hub\n• Prowler\n• Misconfig detection"]
+    end
+
+    subgraph OUTPUTS["Actionable Outputs"]
+        CICD["🚫 CI/CD Gate\nBlock on CRITICAL"]
+        TICKETS["🎫 Ticket Backlog\nJira / Linear / DefectDojo"]
+        TRENDS["📈 Trend Reports\nMonth-over-month delta"]
+        ESCALATE["🔔 Escalations\nOwner → Mgr → CISO → VP"]
+        POSTURE["📋 Posture Report\nCVEs + Misconfigs"]
+    end
+
+    INSP --> REPORT
+    REPORT --> PRIORITIZE
+    REPORT --> EPSS
+    PRIORITIZE --> SLA
+    CSPM --> POSTURE
+
+    REPORT --> CICD
+    REPORT --> TRENDS
+    PRIORITIZE --> TICKETS
+    SLA --> ESCALATE
+    CSPM --> POSTURE
+
+    style AWS fill:#1a1a2e,stroke:#e94560,color:#fff
+    style PHANTOM fill:#0f3460,stroke:#16213e,color:#fff
+    style OUTPUTS fill:#162447,stroke:#e94560,color:#fff
+    style REPORT fill:#e94560,stroke:#fff,color:#fff
+    style PRIORITIZE fill:#e94560,stroke:#fff,color:#fff
+    style EPSS fill:#e94560,stroke:#fff,color:#fff
+    style SLA fill:#e94560,stroke:#fff,color:#fff
+    style CSPM fill:#e94560,stroke:#fff,color:#fff
