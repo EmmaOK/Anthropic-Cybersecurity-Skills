@@ -1,0 +1,62 @@
+flowchart TD
+    A["🔍 AWS Inspector v2<br/>Continuous scanning — all EC2 instances"] --> B
+
+    B["📊 aws-inspector-findings-reporter<br/>agent.py report<br/>11,734 findings collected"]
+
+    B --> C["🧠 aws-vulnerability-remediation-prioritization<br/>agent.py prioritize --kev --epss<br/>Priority score = severity × EPSS × KEV(3×) × log(resources)"]
+
+    C --> D{"🔥 KEV findings<br/>in backlog?"}
+
+    D -- "YES — 16 CVEs confirmed<br/>under active attack" --> E
+    D -- "No new KEV" --> F
+
+    E["🚨 EMERGENCY TRACK<br/>kernel-vulnerability-patching-runbook<br/>Immediate maintenance window required"]
+
+    F["📋 Standard backlog<br/>Sprint planning via<br/>creating-vulnerability-tickets-in-ivanti"]
+
+    E --> G
+
+    G["📦 PHASE 1 — Pre-Patch Safety Net<br/>agent.py pre-patch<br/>• EBS snapshot all 8 instances<br/>• Create backup AMI per instance<br/>• Record kernel version before<br/>• Write pre_patch_manifest.json"]
+
+    G --> H["🔢 PATCH ORDER<br/>①non-prod: i-069cfc2e28b26141d<br/>②non-prod: i-0674173f3b1d6dfde<br/>③prod: i-0b9d3645d383a79bc ← EPSS 84.9%<br/>④prod: i-0736bb9e53b91960e<br/>⑤prod: i-0ef0ee8b280564d7f<br/>⑥prod: i-0fd32ca2418afb158<br/>⑦prod: i-0199843ac49650d37<br/>⑧prod: i-0a8918542221048cc"]
+
+    H --> I["🛠 PHASE 2 — Apply Patch<br/>Option A: SSM Patch Manager (recommended)<br/>Option B: Amazon Linux Live Patching (no reboot)<br/>Option C: Manual SSH patching"]
+
+    I --> J["✅ PHASE 3 — Health Gates<br/>After each instance reboot:<br/>• EC2 status checks: ok/ok<br/>• SSM ping: Online<br/>• uname -r changed<br/>• ALB health: healthy<br/>• App smoke test: HTTP 200<br/>• CloudWatch errors: 30-min soak"]
+
+    J --> K{Gate passed?}
+
+    K -- YES --> L{Last instance?}
+    K -- NO --> M
+
+    M["⏪ PHASE 4 — ROLLBACK"]
+
+    M --> M1["Option 1: GRUB — boot previous kernel<br/>sudo grubby --set-default-index 1<br/>Time: ~5 min"]
+    M --> M2["Option 2: EBS snapshot restore<br/>Detach → restore snap → reattach<br/>Time: 15–30 min"]
+    M --> M3["Option 3: Launch from backup AMI<br/>ALB target swap — zero downtime<br/>Time: immediate traffic shift"]
+
+    L -- "More instances remain" --> H
+    L -- "All instances patched" --> N
+
+    N["🔎 PHASE 5 — Post-Patch Verification<br/>agent.py post-patch<br/>• Inspector re-scan for KEV CVEs<br/>• kernel_before vs kernel_after comparison<br/>• Exit 0 = PASS / Exit 1 = FAIL"]
+
+    N --> O{Verification<br/>passed?}
+
+    O -- PASS --> P["📡 KEV Monitor Baseline Update<br/>kev_monitor.py check<br/>Seed updated state — 16 matches cleared"]
+
+    O -- FAIL --> Q["⚠️ Investigate<br/>Reboot pending? Patch failed?<br/>Check CloudWatch + SSM logs"]
+
+    Q --> I
+
+    P --> R["🎫 Close Change Record<br/>creating-vulnerability-tickets-in-ivanti<br/>Attach verification reports<br/>10,087 findings closed (94% of backlog)"]
+
+    style A fill:#1a3a4a,stroke:#118ab2,color:#e6edf3
+    style E fill:#3a1a1a,stroke:#e63946,color:#e6edf3
+    style G fill:#1a2a1a,stroke:#06d6a0,color:#e6edf3
+    style M fill:#3a2a1a,stroke:#f4a261,color:#e6edf3
+    style M1 fill:#2a1a1a,stroke:#f4a261,color:#e6edf3
+    style M2 fill:#2a1a1a,stroke:#f4a261,color:#e6edf3
+    style M3 fill:#2a1a1a,stroke:#f4a261,color:#e6edf3
+    style N fill:#1a2a3a,stroke:#58a6ff,color:#e6edf3
+    style P fill:#1a3a2a,stroke:#06d6a0,color:#e6edf3
+    style R fill:#1a2a3a,stroke:#58a6ff,color:#e6edf3
