@@ -1,0 +1,144 @@
+# Bitbucket Pipeline — Build and deploy phantom-mcp to ECS
+# Triggers on changes to: skills/, mcp/phantom_*_server.py, index.json
+#
+# Required repository variables (set in Bitbucket Repository Settings → Variables):
+#   AWS_ACCOUNT_ID          — e.g. [AWS-ACCOUNT-ID]
+#   AWS_REGION              — e.g. us-east-1
+#   ECR_REPOSITORY_NAME     — phantom-mcp
+#   ECS_CLUSTER_NAME        — phantom-mcp-production
+#   ECS_SERVICE_NAME        — phantom-mcp-production
+
+image: python:3.12-slim
+
+definitions:
+  caches:
+    pip: ~/.cache/pip
+
+  steps:
+    - step: &validate-skills
+        name: Validate skill frontmatter
+        caches: [pip]
+        script:
+          - pip install pyyaml -q
+          - |
+            python3 -c "
+            import os, sys, yaml
+            errors = []
+            required = ['name','description','domain','subdomain','tags','version','author','license']
+            for root, dirs, files in os.walk('skills'):
+                if 'SKILL.md' in files:
+                    path = os.path.join(root, 'SKILL.md')
+                    with open(path) as f:
+                        content = f.read()
+                    parts = content.split('---', 2)
+                    if len(parts) < 3:
+                        errors.append(f'{path}: missing frontmatter')
+                        continue
+                    try:
+                        fm = yaml.safe_load(parts[1])
+                        for field in required:
+                            if field not in fm:
+                                errors.append(f'{path}: missing field {field}')
+                    except Exception as e:
+                        errors.append(f'{path}: {e}')
+            if errors:
+                print('VALIDATION ERRORS:')
+                for e in errors: print(' ', e)
+                sys.exit(1)
+            print(f'All skills valid')
+            "
+
+    - step: &build-and-push
+        name: Build Docker image and push to ECR
+        image: atlassian/pipelines-awscli:latest
+        script:
+          - export IMAGE_TAG="${BITBUCKET_COMMIT:0:7}"
+          - export ECR_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}"
+
+          # Authenticate to ECR
+          - aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_URL}
+
+          # Build from repo root (Dockerfile uses COPY skills/ etc.)
+          - docker build -t ${ECR_URL}:${IMAGE_TAG} -t ${ECR_URL}:latest -f mcp/Dockerfile .
+
+          # Scan image before push
+          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --exit-code 1 --severity CRITICAL ${ECR_URL}:${IMAGE_TAG} || echo "WARNING: Critical CVEs found in image"
+
+          - docker push ${ECR_URL}:${IMAGE_TAG}
+          - docker push ${ECR_URL}:latest
+
+          # Write image tag for next step
+          - echo "${IMAGE_TAG}" > image_tag.txt
+        services:
+          - docker
+        artifacts:
+          - image_tag.txt
+
+    - step: &deploy-ecs
+        name: Force ECS rolling deploy
+        image: atlassian/pipelines-awscli:latest
+        script:
+          - export IMAGE_TAG=$(cat image_tag.txt)
+          - export ECR_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}"
+
+          # Update task definition with new image tag
+          - |
+            TASK_DEF=$(aws ecs describe-task-definition \
+              --task-definition ${ECS_SERVICE_NAME} \
+              --query 'taskDefinition' --output json)
+
+            NEW_TASK_DEF=$(echo $TASK_DEF | python3 -c "
+            import json, sys
+            td = json.load(sys.stdin)
+            td['containerDefinitions'][0]['image'] = '${ECR_URL}:${IMAGE_TAG}'
+            for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+                td.pop(k, None)
+            print(json.dumps(td))
+            ")
+
+          - NEW_TASK_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          - echo "Registered new task definition: ${NEW_TASK_ARN}"
+
+          # Update service to use new task definition
+          - |
+            aws ecs update-service \
+              --cluster ${ECS_CLUSTER_NAME} \
+              --service ${ECS_SERVICE_NAME} \
+              --task-definition ${NEW_TASK_ARN} \
+              --force-new-deployment
+
+          # Wait for stability (up to 10 min)
+          - aws ecs wait services-stable --cluster ${ECS_CLUSTER_NAME} --services ${ECS_SERVICE_NAME}
+          - echo "Deployment complete — ${ECS_SERVICE_NAME} is stable"
+
+    - step: &smoke-test
+        name: Smoke test — verify /health endpoint
+        image: atlassian/pipelines-awscli:latest
+        script:
+          - |
+            # Retrieve ALB DNS from Terraform output or SSM
+            ALB_DNS=$(aws ssm get-parameter --name "/phantom-mcp/production/alb-dns" --query "Parameter.Value" --output text 2>/dev/null || echo "${PHANTOM_MCP_ALB_DNS}")
+            echo "Testing https://${ALB_DNS}/health"
+            RESPONSE=$(curl -sf "https://${ALB_DNS}/health" -H "Authorization: Bearer ${PHANTOM_API_KEY}" || echo "FAIL")
+            echo "Response: ${RESPONSE}"
+            echo "${RESPONSE}" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('status')=='ok', f'Health check failed: {d}'"
+            echo "Smoke test passed"
+
+pipelines:
+  branches:
+    main:
+      - step: *validate-skills
+      - step: *build-and-push
+      - step: *deploy-ecs
+      - step: *smoke-test
+
+  pull-requests:
+    '**':
+      - step: *validate-skills
+      - step:
+          name: Build only (no push on PRs)
+          image: atlassian/pipelines-awscli:latest
+          script:
+            - docker build -t phantom-mcp:pr-test -f mcp/Dockerfile . && echo "Build OK"
+          services:
+            - docker

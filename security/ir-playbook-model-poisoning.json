@@ -1,0 +1,95 @@
+{
+  "incident_type": "model-poisoning",
+  "framework_references": [
+    "LLM04:2025",
+    "MAESTRO-L2",
+    "ATLAS:AML.T0047"
+  ],
+  "nist_csf": [
+    "RS.MA-02",
+    "RS.AN-03",
+    "RS.MI-02"
+  ],
+  "description": "Training data, fine-tuning dataset, or model weights tampered to introduce backdoors or quality degradation.",
+  "severity": "CRITICAL",
+  "generated_at": "2026-06-04T15:20:15.732273+00:00",
+  "status": "SUSPECTED",
+  "phases": {
+    "prepare": [
+      "Maintain SHA-256 checksums for all training datasets and model checkpoints.",
+      "Sign model artifacts in the registry; verify signatures on load.",
+      "Run adversarial regression tests (known backdoor triggers) on every model promotion."
+    ],
+    "identify": [
+      "Verify dataset checksums against stored signatures.",
+      "Scan the training dataset for backdoor trigger patterns.",
+      "Run the model against a held-out clean evaluation set; compare metrics to pre-update baseline.",
+      "Diff model weights against the last trusted checkpoint."
+    ],
+    "contain": [
+      "Immediately roll back to the last-known-good model checkpoint in the registry.",
+      "Block all inference traffic to the poisoned model version.",
+      "Freeze access to the training data pipeline pending investigation.",
+      "Revoke pipeline credentials used since the earliest possible compromise timestamp."
+    ],
+    "eradicate": [
+      "Audit the data pipeline from ingestion to training (use llm-data-and-model-poisoning-defense).",
+      "Quarantine all dataset records added since the last clean checkpoint.",
+      "Re-validate pipeline input validation, access controls, and provenance controls.",
+      "Identify the pipeline stage where poisoning was introduced (data collection, labelling, fine-tuning)."
+    ],
+    "recover": [
+      "Retrain on the cleaned, re-checksummed dataset.",
+      "Run full adversarial regression suite before promoting the new model.",
+      "Implement dataset signing in CI/CD to prevent future undetected tampering.",
+      "Re-establish evaluation baselines for the recovered model."
+    ],
+    "lessons_learned": [
+      "Review data supply chain for untrusted ingestion sources.",
+      "Assess whether CI/CD pipeline had sufficient access controls on training jobs.",
+      "Update ai-data-operations-availability-and-integrity controls."
+    ]
+  },
+  "containment_commands": [
+    "mlflow models serve -m models:/production/clean_checkpoint  # serve safe version",
+    "kubectl set image deployment/inference-server model=registry/model:safe_tag"
+  ],
+  "output_format_example": {
+    "incident_id": "AI-IR-2026-0604-001",
+    "incident_type": "model-poisoning",
+    "severity": "CRITICAL",
+    "declared_at": "2026-06-04T15:20:15.732273+00:00",
+    "phases": {
+      "prepare": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "identify": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "contain": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "eradicate": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "recover": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "lessons_learned": {
+        "status": "PENDING",
+        "actions": []
+      }
+    },
+    "timeline": [
+      {
+        "timestamp": "2026-06-04T15:20:15.732273+00:00",
+        "event": "Incident declared"
+      }
+    ]
+  }
+}

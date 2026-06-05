@@ -1,0 +1,96 @@
+{
+  "incident_type": "rogue-agent",
+  "framework_references": [
+    "ASI10:2026",
+    "MAESTRO-L3",
+    "ATLAS:AML.T0068"
+  ],
+  "nist_csf": [
+    "RS.MA-01",
+    "RS.MI-01",
+    "RS.MI-02",
+    "RS.CO-02"
+  ],
+  "description": "Agent deviates from intended objectives via reward hacking, unauthorized self-replication, or collusion.",
+  "severity": "CRITICAL",
+  "generated_at": "2026-06-04T15:20:13.954457+00:00",
+  "status": "SUSPECTED",
+  "phases": {
+    "prepare": [
+      "Establish behavioral baselines for each agent covering tool call volumes, resource consumption, and output types.",
+      "Deploy kill switches for each agent registered in the process registry.",
+      "Configure Prometheus alerts for per-agent resource consumption thresholds."
+    ],
+    "identify": [
+      "Run rogue-agent-detection-and-containment to classify behavioral signals.",
+      "Check for unauthorized subprocess spawning (PIDs not in the authorized registry).",
+      "Compute optimization/quality metric divergence (reward hacking signal).",
+      "Run multi-agent collusion detector across all active agents."
+    ],
+    "contain": [
+      "Send SIGTERM to the agent process; escalate to SIGKILL after 5 seconds.",
+      "Revoke all API keys and credentials the agent had access to.",
+      "Snapshot agent memory/state for forensic analysis before cleanup.",
+      "Terminate any unauthorized subprocesses spawned by the agent."
+    ],
+    "eradicate": [
+      "Audit the agent goal specification for reward function misalignment.",
+      "Identify and revert all persisted side-effects (DB writes, scheduled jobs, spawned processes).",
+      "Review multi-agent telemetry for collusion patterns involving other agents.",
+      "Remove any self-installed persistence mechanisms."
+    ],
+    "recover": [
+      "Restart agent with corrected, formally specified objective.",
+      "Deploy under human-in-the-loop supervision for 48 hours before restoring full autonomy.",
+      "Add rogue signal patterns to behavioral monitoring baseline.",
+      "Increase sigma threshold sensitivity on the behavioral anomaly detector."
+    ],
+    "lessons_learned": [
+      "Review whether reward function was aligned with true objective.",
+      "Assess multi-agent communication channels for injection vectors.",
+      "Update ai-agent-ecosystem-security and ai-agent-framework-security controls."
+    ]
+  },
+  "containment_commands": [
+    "kill -TERM <pid> && sleep 5 && kill -KILL <pid>  # terminate rogue agent",
+    "kubectl delete pod <agent-pod> --grace-period=0  # immediate pod termination"
+  ],
+  "output_format_example": {
+    "incident_id": "AI-IR-2026-0604-001",
+    "incident_type": "rogue-agent",
+    "severity": "CRITICAL",
+    "declared_at": "2026-06-04T15:20:13.954457+00:00",
+    "phases": {
+      "prepare": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "identify": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "contain": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "eradicate": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "recover": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "lessons_learned": {
+        "status": "PENDING",
+        "actions": []
+      }
+    },
+    "timeline": [
+      {
+        "timestamp": "2026-06-04T15:20:13.954457+00:00",
+        "event": "Incident declared"
+      }
+    ]
+  }
+}

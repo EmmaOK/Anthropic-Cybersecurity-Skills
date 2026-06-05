@@ -1,0 +1,129 @@
+{
+  "system_name": "phantom-mcp",
+  "assessed_by": "parsed from questionnaire: incident-readiness-questionnaire-phantom-mcp.md",
+  "assessed_at": "2026-06-04T16:28:55.396115+00:00",
+  "overall_score": 55,
+  "overall_risk": "RED",
+  "deployment_recommendation": "BLOCK \u2014 overall score 55/100 is below the 60-point deployment threshold. Resolve all P1 gaps before promoting to production.",
+  "dimensions": {
+    "observability": {
+      "label": "Observability",
+      "score": 33,
+      "risk": "CRITICAL",
+      "passed": 2,
+      "total": 6,
+      "gaps": [
+        {
+          "control_id": "OBS-01",
+          "control": "Agent telemetry enabled",
+          "severity": "CRITICAL",
+          "gap_detail": "Without agent telemetry there is no basis for anomaly detection or post-incident forensics."
+        },
+        {
+          "control_id": "OBS-02",
+          "control": "LLM API gateway logging enabled",
+          "severity": "CRITICAL",
+          "gap_detail": "Prompt injection and goal hijacking are invisible without gateway-level logging."
+        },
+        {
+          "control_id": "OBS-03",
+          "control": "Tool call arguments and results logged",
+          "severity": "HIGH",
+          "gap_detail": "Data exfiltration via tool calls is undetectable without argument-level logging."
+        },
+        {
+          "control_id": "OBS-05",
+          "control": "Behavioral baselines established for each agent",
+          "severity": "HIGH",
+          "gap_detail": "Anomaly detection is impossible without a baseline \u2014 every alert will be a false positive or missed entirely."
+        }
+      ]
+    },
+    "rollback_capability": {
+      "label": "Rollback Capability",
+      "score": 80,
+      "risk": "GREEN",
+      "passed": 4,
+      "total": 5,
+      "gaps": [
+        {
+          "control_id": "ROL-01",
+          "control": "Model checkpoints signed and stored",
+          "severity": "CRITICAL",
+          "gap_detail": "Without signed checkpoints, rollback destination integrity cannot be verified \u2014 you may restore to a poisoned version."
+        }
+      ]
+    },
+    "kill_switches": {
+      "label": "Kill Switches",
+      "score": 100,
+      "risk": "GREEN",
+      "passed": 4,
+      "total": 4,
+      "gaps": []
+    },
+    "least_privilege": {
+      "label": "Least-Privilege Posture",
+      "score": 20,
+      "risk": "CRITICAL",
+      "passed": 1,
+      "total": 5,
+      "gaps": [
+        {
+          "control_id": "LPP-01",
+          "control": "Tool manifests audited for least-privilege scope",
+          "severity": "HIGH",
+          "gap_detail": "Overly broad tool manifests are the primary enabler of excessive agency and data exfiltration incidents."
+        },
+        {
+          "control_id": "LPP-02",
+          "control": "Network egress policies restrict agent outbound traffic",
+          "severity": "CRITICAL",
+          "gap_detail": "Without egress restrictions, any injected instruction can exfiltrate data to an attacker-controlled endpoint."
+        },
+        {
+          "control_id": "LPP-03",
+          "control": "No agent runs with wildcard tool or IAM permissions",
+          "severity": "CRITICAL",
+          "gap_detail": "Wildcard permissions turn any agent compromise into a full system compromise."
+        },
+        {
+          "control_id": "LPP-04",
+          "control": "Human approval gates for sensitive tool calls",
+          "severity": "HIGH",
+          "gap_detail": "Fully autonomous sensitive actions remove the last human checkpoint that could catch a goal-hijacked or injected agent."
+        }
+      ]
+    },
+    "playbook_activation": {
+      "label": "Playbook Activation",
+      "score": 40,
+      "risk": "RED",
+      "passed": 2,
+      "total": 5,
+      "gaps": [
+        {
+          "control_id": "PBK-02",
+          "control": "Team trained on AI-specific IR playbooks",
+          "severity": "HIGH",
+          "gap_detail": "Playbooks that only the author understands are useless during a 2am incident with the author unavailable."
+        },
+        {
+          "control_id": "PBK-03",
+          "control": "Approvals workflow configured for sensitive containment actions",
+          "severity": "MEDIUM",
+          "gap_detail": "Without an approvals workflow, containment actions taken under pressure have no audit trail and no second pair of eyes."
+        },
+        {
+          "control_id": "PBK-05",
+          "control": "AI IR playbook tested in a tabletop exercise",
+          "severity": "HIGH",
+          "gap_detail": "Untested playbooks always have gaps \u2014 tabletop exercises surface them before a real incident does."
+        }
+      ]
+    }
+  },
+  "total_controls": 25,
+  "total_passed": 13,
+  "total_gaps": 12
+}

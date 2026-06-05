@@ -1,0 +1,154 @@
+{
+  "system_name": "sample-ai-app",
+  "assessed_by": "parsed from questionnaire: incident-readiness-questionnaire-sample-ai-app.md",
+  "assessed_at": "2026-06-04T17:13:41.388594+00:00",
+  "overall_score": 35,
+  "overall_risk": "CRITICAL",
+  "deployment_recommendation": "BLOCK \u2014 overall score 35/100 is below the 60-point deployment threshold. Resolve all P1 gaps before promoting to production.",
+  "dimensions": {
+    "observability": {
+      "label": "Observability",
+      "score": 33,
+      "risk": "CRITICAL",
+      "passed": 2,
+      "total": 6,
+      "gaps": [
+        {
+          "control_id": "OBS-01",
+          "control": "Agent telemetry enabled",
+          "severity": "CRITICAL",
+          "gap_detail": "Without agent telemetry there is no basis for anomaly detection or post-incident forensics."
+        },
+        {
+          "control_id": "OBS-02",
+          "control": "LLM API gateway logging enabled",
+          "severity": "CRITICAL",
+          "gap_detail": "Prompt injection and goal hijacking are invisible without gateway-level logging."
+        },
+        {
+          "control_id": "OBS-05",
+          "control": "Behavioral baselines established for each agent",
+          "severity": "HIGH",
+          "gap_detail": "Anomaly detection is impossible without a baseline \u2014 every alert will be a false positive or missed entirely."
+        },
+        {
+          "control_id": "OBS-06",
+          "control": "Log retention >= 72 hours at full fidelity",
+          "severity": "MEDIUM",
+          "gap_detail": "Most AI incidents are detected hours after the triggering event \u2014 72h retention is the minimum for viable forensics."
+        }
+      ]
+    },
+    "rollback_capability": {
+      "label": "Rollback Capability",
+      "score": 60,
+      "risk": "AMBER",
+      "passed": 3,
+      "total": 5,
+      "gaps": [
+        {
+          "control_id": "ROL-04",
+          "control": "Rollback procedure tested within last 90 days",
+          "severity": "CRITICAL",
+          "gap_detail": "Untested rollbacks routinely fail under incident conditions \u2014 the most common readiness gap."
+        },
+        {
+          "control_id": "ROL-05",
+          "control": "Rollback time < 30 minutes \u2014 documented and verified",
+          "severity": "MEDIUM",
+          "gap_detail": "Rollbacks that take hours extend the blast radius of an active incident significantly."
+        }
+      ]
+    },
+    "kill_switches": {
+      "label": "Kill Switches",
+      "score": 0,
+      "risk": "CRITICAL",
+      "passed": 0,
+      "total": 4,
+      "gaps": [
+        {
+          "control_id": "KSW-01",
+          "control": "Per-agent kill switch implemented",
+          "severity": "CRITICAL",
+          "gap_detail": "Without a kill switch, containing a rogue or hijacked agent requires manual intervention that takes minutes \u2014 not seconds."
+        },
+        {
+          "control_id": "KSW-02",
+          "control": "Kill switch tested in staging environment",
+          "severity": "CRITICAL",
+          "gap_detail": "Kill switches that exist in code but have never fired in the target environment routinely fail at the worst moment."
+        },
+        {
+          "control_id": "KSW-03",
+          "control": "Emergency halt-all-agents capability exists",
+          "severity": "HIGH",
+          "gap_detail": "Multi-agent collusion or a shared injection vector may require halting the entire agent fleet at once."
+        },
+        {
+          "control_id": "KSW-04",
+          "control": "Kill switch activation time < 60 seconds \u2014 verified",
+          "severity": "HIGH",
+          "gap_detail": "A 5-minute kill time allows a rogue agent to exfiltrate gigabytes or spawn dozens of subprocesses before containment."
+        }
+      ]
+    },
+    "least_privilege": {
+      "label": "Least-Privilege Posture",
+      "score": 80,
+      "risk": "GREEN",
+      "passed": 4,
+      "total": 5,
+      "gaps": [
+        {
+          "control_id": "LPP-02",
+          "control": "Network egress policies restrict agent outbound traffic",
+          "severity": "CRITICAL",
+          "gap_detail": "Without egress restrictions, any injected instruction can exfiltrate data to an attacker-controlled endpoint."
+        }
+      ]
+    },
+    "playbook_activation": {
+      "label": "Playbook Activation",
+      "score": 0,
+      "risk": "CRITICAL",
+      "passed": 0,
+      "total": 5,
+      "gaps": [
+        {
+          "control_id": "PBK-01",
+          "control": "IR playbooks mapped to each AI threat type",
+          "severity": "CRITICAL",
+          "gap_detail": "General IT IR playbooks do not cover AI-specific containment steps (session flushing, kill switch activation, RAG corpus rollback)."
+        },
+        {
+          "control_id": "PBK-02",
+          "control": "Team trained on AI-specific IR playbooks",
+          "severity": "HIGH",
+          "gap_detail": "Playbooks that only the author understands are useless during a 2am incident with the author unavailable."
+        },
+        {
+          "control_id": "PBK-03",
+          "control": "Approvals workflow configured for sensitive containment actions",
+          "severity": "MEDIUM",
+          "gap_detail": "Without an approvals workflow, containment actions taken under pressure have no audit trail and no second pair of eyes."
+        },
+        {
+          "control_id": "PBK-04",
+          "control": "Incident command structure defined for AI incidents",
+          "severity": "HIGH",
+          "gap_detail": "AI incidents without a command structure devolve into coordination failures \u2014 multiple people taking conflicting containment actions."
+        },
+        {
+          "control_id": "PBK-05",
+          "control": "AI IR playbook tested in a tabletop exercise",
+          "severity": "HIGH",
+          "gap_detail": "Untested playbooks always have gaps \u2014 tabletop exercises surface them before a real incident does."
+        }
+      ]
+    }
+  },
+  "total_controls": 25,
+  "total_passed": 9,
+  "total_gaps": 16
+}

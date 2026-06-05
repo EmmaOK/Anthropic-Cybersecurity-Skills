@@ -1,0 +1,95 @@
+{
+  "incident_type": "prompt-injection",
+  "framework_references": [
+    "LLM01:2025",
+    "MAESTRO-L3",
+    "ATLAS:AML.T0054"
+  ],
+  "nist_csf": [
+    "RS.MA-01",
+    "RS.AN-03",
+    "RS.MI-01"
+  ],
+  "description": "Injected instructions in user input or retrieved content override the system prompt.",
+  "severity": "HIGH",
+  "generated_at": "2026-06-04T15:20:11.234187+00:00",
+  "status": "SUSPECTED",
+  "phases": {
+    "prepare": [
+      "Maintain a blocklist of known injection patterns updated from threat intel feeds.",
+      "Configure input validation middleware on the LLM API gateway.",
+      "Establish conversation session logging with turn-level retention for at least 72 hours."
+    ],
+    "identify": [
+      "Collect the offending conversation turn from the session log.",
+      "Run injection pattern scanner across user_message and any retrieved RAG documents.",
+      "Determine injection vector: direct user input, indirect (RAG/tool output), or multi-turn.",
+      "Capture full conversation context for forensic review."
+    ],
+    "contain": [
+      "Flush the affected user session cache to prevent injected state persisting.",
+      "Enable strict input validation on the API gateway \u2014 block matched injection patterns.",
+      "If indirect injection: disable the data source (RAG corpus, tool) pending investigation.",
+      "If a session cookie or token was stolen via the injection, invalidate it."
+    ],
+    "eradicate": [
+      "Scan the RAG corpus for poisoned documents (use rag-pipeline-security-and-data-provenance).",
+      "Quarantine all documents ingested since the last clean snapshot.",
+      "Harden the system prompt with explicit anti-injection anchors.",
+      "Add discovered injection patterns to the gateway blocklist."
+    ],
+    "recover": [
+      "Re-enable the endpoint with the hardened system prompt.",
+      "Replay affected conversations against the patched prompt; verify outputs are benign.",
+      "Restore clean RAG corpus from last signed snapshot.",
+      "Monitor for recurrence for 24 hours before declaring recovery complete."
+    ],
+    "lessons_learned": [
+      "Document the injection vector and update threat model.",
+      "Review whether indirect injection paths (RAG, tool outputs) have sufficient sanitization.",
+      "Update detection rules in detecting-ai-model-prompt-injection-attacks."
+    ]
+  },
+  "containment_commands": [
+    "redis-cli KEYS 'session:*' | xargs redis-cli DEL   # flush all sessions",
+    "kubectl rollout restart deployment/llm-gateway      # redeploy with updated blocklist"
+  ],
+  "output_format_example": {
+    "incident_id": "AI-IR-2026-0604-001",
+    "incident_type": "prompt-injection",
+    "severity": "HIGH",
+    "declared_at": "2026-06-04T15:20:11.234187+00:00",
+    "phases": {
+      "prepare": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "identify": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "contain": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "eradicate": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "recover": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "lessons_learned": {
+        "status": "PENDING",
+        "actions": []
+      }
+    },
+    "timeline": [
+      {
+        "timestamp": "2026-06-04T15:20:11.234187+00:00",
+        "event": "Incident declared"
+      }
+    ]
+  }
+}

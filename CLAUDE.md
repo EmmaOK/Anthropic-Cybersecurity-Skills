@@ -35,16 +35,54 @@ All 41 AI security skills use `subdomain: ai-security` (an accepted extension to
 
 ## MCP Servers
 
-Two MCP servers are registered in `.mcp.json` and load automatically in Claude Code.
+Seven MCP servers are registered in `.mcp.json` and load automatically when Claude Code is launched from this directory:
+
+| Server | Tools | Backend required | Detailed docs |
+|---|---|---|---|
+| `phantom-skills` | 6 | Skill library only (this repo) | Below |
+| `cve-intel` | 27 | External clone at `~/Desktop/cve-mcp-server` | Below |
+| `defectdojo` | 8 | A reachable DefectDojo instance (env vars) | Below |
+| `jira` | 6 | A reachable Jira (env vars) | Below |
+| `infra` | 13 | `kubectl`, `aws`, `terraform`, `helm` on PATH | Brief below |
+| `dast` | 11 | OWASP ZAP and/or Burp running locally | Brief below |
+| `burp-pentest` | 10 | Burp Suite Pro extension at `127.0.0.1:9877` | Brief below |
+
+**Verifying load:** in any Claude Code session started from this dir, run `/mcp`. Each server should show `connected` with its tool count. If anything shows `failed`, click the entry to view the server's stderr log.
 
 ### phantom-skills
-Exposes the skill library to Claude Code as 4 tools: `search_skills`, `load_skill`, `run_skill_agent`, `list_subdomains`.
+Exposes the skill library to Claude Code as 6 tools: `search_skills`, `load_skill`, `run_skill_agent`, `list_subdomains`, `search_soc_skills`, `get_platform_adapted_skill`.
 ```json
 { "command": "python3", "args": ["mcp/phantom_mcp_server.py"] }
 ```
-No extra dependencies — reads `index.json` at startup.
+
+**Dependency: the `mcp` Python SDK.** Despite earlier docs claiming "no extra dependencies," `mcp/phantom_mcp_server.py` imports `mcp.server`. On a fresh checkout the import succeeds as a namespace package (`mcp.__file__ is None`) but `mcp.server.Server` is missing, so the server fails to start with a silent stderr log. Install with:
+
+```bash
+# Homebrew Python (PEP 668-managed) — use --break-system-packages:
+python3 -m pip install --break-system-packages mcp
+
+# Other Python environments (asdf, pyenv, system pip without PEP 668):
+python3 -m pip install mcp
+```
+
+Verify:
+```bash
+python3 -c "from mcp.server import Server; print('OK')"
+```
+
+The `mcp` package must be installed in **whichever Python `.mcp.json`'s `python3` resolves to** at launch time (`which python3` from the shell that launches `claude`). Using a venv requires editing `.mcp.json` to point at `.venv/bin/python` — this is a committed file, so changes affect all teammates.
+
+Phantom reads `index.json` at startup. Once installed correctly, `/mcp` in Claude Code shows `phantom-skills connected 4 tools`.
 
 **Known limitation:** `index.json` only stores `name/description/domain/path` per skill; `list_subdomains` and `search_skills` therefore return `subdomain: "unknown"` for all skills. To fix, the MCP server needs to parse SKILL.md frontmatter directly (not yet implemented).
+
+**Troubleshooting:**
+| Symptom | Cause | Fix |
+|---|---|---|
+| `phantom-skills failed` in `/mcp` | `mcp.server` not importable in the Python that launched | Re-run install in the right Python (`which python3` first) |
+| Server starts but tools return errors | `ANTHROPIC_API_KEY` not exported in the shell that launched `claude` | `export ANTHROPIC_API_KEY=sk-ant-...` then relaunch |
+| Tools list empty / wrong cwd | `claude` launched from outside the project root | `cd` to repo root before running `claude` |
+| `pip install` blocked with PEP 668 error | Homebrew or other system-managed Python | Add `--break-system-packages` (safe for a single package on a dev box) |
 
 ### cve-intel (mukul975/cve-mcp-server)
 27-tool MCP server for live CVE intelligence: NVD lookup, EPSS scores, CISA KEV catalog, PoC detection, Shodan exposure, ATT&CK technique mapping, and composite risk scoring.
@@ -63,6 +101,52 @@ pip install -e .
 Run `python3 -m cve_mcp.server` from `~/Desktop/cve-mcp-server/` to verify startup. The server pre-fetches the CISA KEV catalog on boot and caches all API responses in SQLite (`~/.cache/cve_mcp/vuln_cache.db`).
 
 **Risk scoring formula:** EPSS 35% + KEV 30% + CVSS 20% + PoC 15%; ×1.5 multiplier when both KEV and PoC are present.
+
+### defectdojo
+Triages and updates DefectDojo findings without leaving Claude Code — 8 tools:
+
+| Tool | Purpose |
+|---|---|
+| `dd_list_findings` | List findings with filters (test, severity, active, verified) |
+| `dd_get_finding` | Fetch a single finding by ID |
+| `dd_update_finding` | PATCH any field — severity, active, verified, false_p, mitigated |
+| `dd_add_note` | POST a triage note to a finding |
+| `dd_list_products` / `dd_list_engagements` | Enumerate DefectDojo state |
+| `dd_weekly_activity` | Generate weekly review summary |
+| `dd_get_metrics` | Aggregate severity counts / SLA stats |
+
+**Env vars (set before launching `claude`):**
+```bash
+export DEFECTDOJO_URL=https://defectdojo.example.com
+export DEFECTDOJO_API_KEY=<token>     # rotate routinely; treat as a production credential
+```
+
+The defaults in `.mcp.json` point at `localhost:8080` and an empty API key — override via shell env, never edit `.mcp.json` to embed the token (it's committed).
+
+**Use case:** triaging findings, adding verified-FP notes, flipping severity. Replaces hand-rolled `curl`/`urllib` calls against the v2 REST API.
+
+### jira
+Creates and tracks security tickets — 6 tools: `jira_create_issue`, `jira_search`, `jira_get_issue`, `jira_add_comment`, `jira_transition_issue`, `jira_weekly_activity`.
+
+**Env vars:**
+```bash
+export JIRA_URL=https://[org].atlassian.net
+export JIRA_USER=<email>
+export JIRA_TOKEN=<api-token>
+export JIRA_PROJECT_KEY=SEC     # default project key; override per call
+```
+
+Useful for converting a triaged DefectDojo finding into a tracked remediation ticket, or for weekly activity summaries.
+
+### infra · dast · burp-pentest (brief)
+
+| Server | Tool prefix | Notes |
+|---|---|---|
+| `infra` | `kubectl_*`, `aws_*`, `terraform_*`, `helm_*`, `write_manifest` | Executes against your local AWS/k8s credentials. Treat as production-capable — every `aws_run` / `kubectl_apply` is a real action. |
+| `dast` | `dast_*`, `zap_*`, `burp_*` | Requires ZAP at `localhost:8080` and/or Burp at `localhost:1337` (set `ZAP_API_KEY` / `BURP_API_KEY` env vars). |
+| `burp-pentest` | `burp_*` (proxy history, scanner issues, fuzz, decode, payload-gen) | Requires the custom Burp extension listening at `127.0.0.1:9877`. See `burp-extension/` if present. |
+
+All three are safe to leave registered — they fail closed when the backend is unreachable; Claude Code just shows `failed` in `/mcp` rather than crashing the session.
 
 ## Key Commands
 

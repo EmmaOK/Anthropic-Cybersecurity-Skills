@@ -1,0 +1,95 @@
+{
+  "incident_type": "mcp-compromise",
+  "framework_references": [
+    "MCP01",
+    "MAESTRO-L3",
+    "ATLAS:AML.T0088"
+  ],
+  "nist_csf": [
+    "RS.MA-01",
+    "RS.MI-01",
+    "RS.CO-02"
+  ],
+  "description": "An MCP tool schema or server-side implementation modified by an attacker to perform unauthorized actions.",
+  "severity": "CRITICAL",
+  "generated_at": "2026-06-04T15:20:13.158700+00:00",
+  "status": "SUSPECTED",
+  "phases": {
+    "prepare": [
+      "Sign and store SHA-256 hashes of all MCP tool manifests on every merge.",
+      "Enable file integrity monitoring on MCP server binaries and configuration.",
+      "Require tool manifest review in CI before any tool schema change is deployed."
+    ],
+    "identify": [
+      "Verify tool manifest hashes against signed reference values.",
+      "Diff the current manifest against the last signed version in version control.",
+      "Review MCP server access logs for unauthorized modification events.",
+      "Inspect process tree for unexpected subprocess spawning from the MCP server."
+    ],
+    "contain": [
+      "Disable the affected MCP tool in the server configuration (set disabled: true).",
+      "Revoke all active agent sessions that invoked the compromised tool.",
+      "Block the MCP server process from making external network connections.",
+      "Notify all agents currently using the tool."
+    ],
+    "eradicate": [
+      "Restore the MCP tool manifest from the last signed, trusted version.",
+      "Rebuild and redeploy the MCP server from a clean source.",
+      "Audit all actions taken by agents that invoked the compromised tool; revert unauthorized effects.",
+      "Review the CI/CD pipeline for the MCP server for unauthorized access."
+    ],
+    "recover": [
+      "Redeploy the MCP server from a clean, signed build.",
+      "Re-register the MCP server with a fresh cryptographic signature.",
+      "Require tool manifest signature verification in the agent orchestration layer.",
+      "Monitor tool invocations for 48 hours after recovery."
+    ],
+    "lessons_learned": [
+      "Review MCP server access controls and deployment pipeline.",
+      "Assess whether tool schema changes require dual approval.",
+      "Update mcp-tool-poisoning-detection-and-defense monitoring rules."
+    ]
+  },
+  "containment_commands": [
+    "jq '.tools[] |= if .name == \"<tool>\" then .disabled = true else . end' manifest.json > manifest_patched.json",
+    "kubectl delete pod -l app=mcp-server   # force pod restart from clean image"
+  ],
+  "output_format_example": {
+    "incident_id": "AI-IR-2026-0604-001",
+    "incident_type": "mcp-compromise",
+    "severity": "CRITICAL",
+    "declared_at": "2026-06-04T15:20:13.158700+00:00",
+    "phases": {
+      "prepare": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "identify": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "contain": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "eradicate": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "recover": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "lessons_learned": {
+        "status": "PENDING",
+        "actions": []
+      }
+    },
+    "timeline": [
+      {
+        "timestamp": "2026-06-04T15:20:13.158700+00:00",
+        "event": "Incident declared"
+      }
+    ]
+  }
+}

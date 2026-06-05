@@ -1,0 +1,95 @@
+{
+  "incident_type": "data-exfiltration",
+  "framework_references": [
+    "LLM06:2025",
+    "MAESTRO-L3",
+    "ATLAS:AML.T0054"
+  ],
+  "nist_csf": [
+    "RS.MA-01",
+    "RS.MI-01",
+    "RS.MI-02",
+    "RS.CO-02"
+  ],
+  "description": "An agent or LLM exfiltrates data via excessive permissions \u2014 calling unauthorized external endpoints with sensitive payloads.",
+  "severity": "CRITICAL",
+  "generated_at": "2026-06-04T15:20:15.010345+00:00",
+  "status": "SUSPECTED",
+  "phases": {
+    "prepare": [
+      "Apply network egress policy: agent pods may only call allowlisted internal endpoints.",
+      "Scan all tool call arguments for PII and credentials before execution.",
+      "Enforce least-privilege tool manifest with llm-excessive-agency-prevention."
+    ],
+    "identify": [
+      "Scan tool call logs for exfiltration patterns: external HTTP calls, base64 encoding, email sending.",
+      "Identify the data scope of what was potentially exfiltrated.",
+      "Determine whether exfiltration was triggered by a prompt injection or misconfigured tool permissions."
+    ],
+    "contain": [
+      "Deny all network egress from the agent container via network policy immediately.",
+      "Rotate all credentials the agent had access to (API keys, DB passwords, cloud IAM keys).",
+      "Block the destination IPs/domains at the firewall or WAF.",
+      "Preserve network flow logs and DNS query logs for forensics."
+    ],
+    "eradicate": [
+      "Audit the tool manifest; remove any tools with network access that are not required.",
+      "Apply strict output scanning for PII and credentials before any LLM response is passed to a tool call.",
+      "Identify the data that was exfiltrated; assess regulatory notification obligations.",
+      "Trace the exfiltration trigger back to its origin (injected instruction, misconfigured permission)."
+    ],
+    "recover": [
+      "Redeploy the agent with a minimal tool manifest.",
+      "Implement human-approval gates for all tools that touch sensitive data or external endpoints.",
+      "Re-establish network egress allowlist; verify only required endpoints are permitted.",
+      "Notify affected data subjects and regulators as required by applicable law."
+    ],
+    "lessons_learned": [
+      "Review whether tool permissions followed least-privilege at design time.",
+      "Assess whether PII/credential scanning was in place before this incident.",
+      "Update llm-sensitive-information-disclosure-prevention controls."
+    ]
+  },
+  "containment_commands": [
+    "kubectl apply -f deny-egress-policy.yaml  # block all agent pod egress",
+    "aws iam delete-access-key --access-key-id <key>  # rotate compromised AWS key"
+  ],
+  "output_format_example": {
+    "incident_id": "AI-IR-2026-0604-001",
+    "incident_type": "data-exfiltration",
+    "severity": "CRITICAL",
+    "declared_at": "2026-06-04T15:20:15.010345+00:00",
+    "phases": {
+      "prepare": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "identify": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "contain": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "eradicate": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "recover": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "lessons_learned": {
+        "status": "PENDING",
+        "actions": []
+      }
+    },
+    "timeline": [
+      {
+        "timestamp": "2026-06-04T15:20:15.010345+00:00",
+        "event": "Incident declared"
+      }
+    ]
+  }
+}

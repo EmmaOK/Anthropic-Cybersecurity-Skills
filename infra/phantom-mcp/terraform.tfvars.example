@@ -1,0 +1,33 @@
+# Copy this to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored — never commit it
+
+aws_region  = "us-east-1"
+environment = "production"
+
+# Get these from: aws ec2 describe-vpcs / describe-subnets
+vpc_id             = "vpc-XXXXXXXX"
+private_subnet_ids = ["subnet-XXXXXXXX", "subnet-YYYYYYYY"]
+public_subnet_ids  = ["subnet-AAAAAAAA", "subnet-BBBBBBBB"]
+
+# Internal ALB = only reachable from VPN/VPC (recommended)
+alb_internal = true
+
+# CIDR ranges that can reach the ALB
+# Add your VPN CIDR + office IP range here
+allowed_cidr_blocks = [
+  "10.0.0.0/8",      # Internal VPC/VPN
+  "172.16.0.0/12",   # Peered VPCs
+]
+
+# ACM certificate for HTTPS
+# Request one at: aws acm request-certificate --domain-name phantom-mcp.security.[organization].com
+acm_certificate_arn = "arn:aws:acm:us-east-1:[AWS-ACCOUNT-ID]:certificate/XXXXXXXX"
+
+# Optional: ARN of secret holding ANTHROPIC_API_KEY for run_skill_agent
+anthropic_api_key_secret_arn = ""
+
+# Fargate sizing (512 CPU / 1024 MB is sufficient for the skills library)
+task_cpu     = 512
+task_memory  = 1024
+desired_count = 2
+image_tag    = "latest"

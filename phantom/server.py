@@ -202,8 +202,7 @@ async def root():
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_page(request: Request):
-    return templates.TemplateResponse("chat.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "chat.html", {
         "modes": list(PERSONAS.keys()),
         "pending_approvals": pending_count(),
     })
@@ -213,8 +212,8 @@ async def chat_page(request: Request):
 async def approvals_page(request: Request):
     pending = list_approvals(status="pending")
     history = [a for a in list_approvals() if a["status"] != "pending"][:20]
-    return templates.TemplateResponse("approvals.html", {
-        "request": request, "pending": pending, "history": history,
+    return templates.TemplateResponse(request, "approvals.html", {
+        "pending": pending, "history": history,
         "pending_count": len(pending), "modes": list(PERSONAS.keys()),
         "pending_approvals": len(pending),
     })
@@ -296,8 +295,8 @@ async def approve_link(request: Request, aid: str, token: str = Query(...)):
     a = decide_approval(aid, "approved", "google-chat")
     if not a:
         return HTMLResponse("<h2 style='font-family:sans-serif'>Approval not found.</h2>", 404)
-    return templates.TemplateResponse("approval_result.html",
-        {"request": request, "decision": "approved", "approval": a,
+    return templates.TemplateResponse(request, "approval_result.html",
+        {"decision": "approved", "approval": a,
          "modes": list(PERSONAS.keys()), "pending_approvals": pending_count()})
 
 
@@ -308,8 +307,8 @@ async def deny_link(request: Request, aid: str, token: str = Query(...)):
     a = decide_approval(aid, "denied", "google-chat")
     if not a:
         return HTMLResponse("<h2 style='font-family:sans-serif'>Approval not found.</h2>", 404)
-    return templates.TemplateResponse("approval_result.html",
-        {"request": request, "decision": "denied", "approval": a,
+    return templates.TemplateResponse(request, "approval_result.html",
+        {"decision": "denied", "approval": a,
          "modes": list(PERSONAS.keys()), "pending_approvals": pending_count()})
 
 

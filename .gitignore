@@ -19,3 +19,4 @@ AUDIT_REPORT.md
 # Pentest reports and client data — never commit
 pentest-reports/
 fortark/
+terraform.tfvars

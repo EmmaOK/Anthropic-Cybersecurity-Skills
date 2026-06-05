@@ -1,0 +1,93 @@
+{
+  "incident_type": "goal-hijacking",
+  "framework_references": [
+    "ASI01:2026",
+    "MAESTRO-L3",
+    "ATLAS:AML.T0068"
+  ],
+  "nist_csf": [
+    "RS.MA-01",
+    "RS.MI-01",
+    "RS.MI-02"
+  ],
+  "description": "An agent is manipulated into pursuing a different objective than its declared goal.",
+  "severity": "CRITICAL",
+  "generated_at": "2026-06-04T15:20:12.224260+00:00",
+  "status": "SUSPECTED",
+  "phases": {
+    "prepare": [
+      "Formally specify agent goals using a schema with explicit allowed_tools and forbidden_actions.",
+      "Instrument every agent action with goal-alignment checks before execution.",
+      "Require human approval for any action not listed in the declared tool manifest."
+    ],
+    "identify": [
+      "Scan agent telemetry for goal_drift_signals: unauthorized resource access, out-of-scope tool calls.",
+      "Correlate anomalous actions with conversation turns to identify the injection point.",
+      "Determine whether the hijacking originated from user input, tool output, or environment observation."
+    ],
+    "contain": [
+      "Send SIGSTOP to the agent process \u2014 pause without terminating to preserve state for forensics.",
+      "Revoke the agent's tool permissions via the orchestration layer.",
+      "Snapshot agent memory and current state before any cleanup.",
+      "Notify the incident command channel."
+    ],
+    "eradicate": [
+      "Perform log forensics to determine when goal drift began and the root cause.",
+      "Rewrite the agent goal with formal constraints and validated JSON schema.",
+      "Identify and revert any persisted side-effects (DB writes, scheduled jobs, spawned processes).",
+      "Review multi-agent logs for collusion signals."
+    ],
+    "recover": [
+      "Restart the agent with hardened goal schema and tighter tool allowlist.",
+      "Run under human-in-the-loop supervision for 24 hours.",
+      "Add triggering action patterns to agent-goal-hijacking-detection watchlist."
+    ],
+    "lessons_learned": [
+      "Assess whether goal specification was sufficiently formal and machine-verifiable.",
+      "Review whether approval gates were in place for all high-risk tool calls.",
+      "Update MAESTRO L3 threat model for the agent framework."
+    ]
+  },
+  "containment_commands": [
+    "kill -STOP <pid>                                    # pause agent process",
+    "kubectl label pod <agent-pod> quarantine=true       # isolate pod via network policy"
+  ],
+  "output_format_example": {
+    "incident_id": "AI-IR-2026-0604-001",
+    "incident_type": "goal-hijacking",
+    "severity": "CRITICAL",
+    "declared_at": "2026-06-04T15:20:12.224260+00:00",
+    "phases": {
+      "prepare": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "identify": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "contain": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "eradicate": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "recover": {
+        "status": "PENDING",
+        "actions": []
+      },
+      "lessons_learned": {
+        "status": "PENDING",
+        "actions": []
+      }
+    },
+    "timeline": [
+      {
+        "timestamp": "2026-06-04T15:20:12.224260+00:00",
+        "event": "Incident declared"
+      }
+    ]
+  }
+}

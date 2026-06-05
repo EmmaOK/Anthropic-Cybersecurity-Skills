@@ -363,7 +363,7 @@ Examples:
     parser.add_argument("--api-key", help="API key for active probe (or set ANTHROPIC_API_KEY)")
     parser.add_argument("--provider", choices=["anthropic", "openai"], default="anthropic",
                         help="LLM provider for active probe. Default: anthropic")
-    parser.add_argument("--output", "-O", help="Save Phantom-format JSON report to this file")
+    parser.add_argument("--report", "-R", help="Save Phantom-format JSON report to this file")
 
     args = parser.parse_args()
 
@@ -376,7 +376,7 @@ Examples:
             system_prompt=args.system_prompt,
             api_key=args.api_key,
             provider=args.provider,
-            output_path=args.output,
+            output_path=args.report,
         ))
 
     if not args.input and not args.file:

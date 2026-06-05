@@ -1,0 +1,27 @@
+version: 0.2
+
+env:
+  variables:
+    ECR_REGION: "us-east-1"
+    ECR_URL: "[AWS-ACCOUNT-ID].dkr.ecr.us-east-1.amazonaws.com/phantom-mcp"
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $ECR_REGION | docker login --username AWS --password-stdin $ECR_URL
+      - IMAGE_TAG=$(echo ${CODEBUILD_RESOLVED_SOURCE_VERSION:-$CODEBUILD_BUILD_NUMBER} | cut -c1-7)
+      - if [ -z "$IMAGE_TAG" ]; then IMAGE_TAG=$(date +%Y%m%d); fi
+      - echo "Building image tag $IMAGE_TAG"
+
+  build:
+    commands:
+      - echo Build started on `date`
+      - docker build -t $ECR_URL:$IMAGE_TAG -t $ECR_URL:latest -f mcp/Dockerfile .
+
+  post_build:
+    commands:
+      - echo Pushing image to ECR...
+      - docker push $ECR_URL:$IMAGE_TAG
+      - docker push $ECR_URL:latest
+      - echo Build complete. Image pushed as $ECR_URL:latest
