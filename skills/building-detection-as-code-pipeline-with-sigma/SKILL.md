@@ -46,7 +46,7 @@ d3fend_techniques:
 ## Prerequisites
 
 - Git repository (GitHub, GitLab, or Bitbucket) for storing Sigma rules
-- Python 3.11+ with `sigma-cli` and `pySigma` backend packages installed
+- Python 3.11+ with `sigma-cli` and `pySigma` backend packages installed (including `pySigma-backend-securonix` for SPOTTER output)
 - CI/CD platform (GitHub Actions, GitLab CI, or Jenkins)
 - At least one target SIEM with an API for programmatic rule deployment (Splunk, Sentinel, Elastic, Chronicle)
 - MITRE ATT&CK Navigator JSON export for coverage gap tracking
@@ -74,7 +74,8 @@ detection-rules/
 ├── pipelines/
 │   ├── splunk_enterprise.yml
 │   ├── sentinel_asim.yml
-│   └── elastic_ecs.yml
+│   ├── elastic_ecs.yml
+│   └── securonix_spotter.yml
 ├── .github/workflows/
 │   ├── validate.yml
 │   └── deploy.yml
@@ -86,7 +87,8 @@ detection-rules/
 # Install sigma-cli and target backends
 pip install sigma-cli
 pip install pySigma-backend-splunk pySigma-backend-microsoft365defender \
-            pySigma-backend-elasticsearch pySigma-backend-chronicle
+            pySigma-backend-elasticsearch pySigma-backend-chronicle \
+            pySigma-backend-securonix
 
 # Verify backends
 sigma list backends
@@ -193,7 +195,8 @@ jobs:
       - name: Install sigma tools
         run: |
           pip install sigma-cli pySigma-backend-splunk \
-            pySigma-backend-microsoft365defender pySigma-backend-elasticsearch
+            pySigma-backend-microsoft365defender pySigma-backend-elasticsearch \
+            pySigma-backend-securonix
 
       - name: Validate rule syntax
         run: sigma check rules/
@@ -210,6 +213,11 @@ jobs:
         run: |
           sigma convert -t microsoft365defender \
             -p pipelines/sentinel_asim.yml rules/ -o /tmp/sentinel_rules.json
+
+      - name: Compile to Securonix SPOTTER (smoke test)
+        run: |
+          sigma convert -t securonix \
+            -p pipelines/securonix_spotter.yml rules/ -o /tmp/securonix_rules.json
 
       - name: Check ATT&CK coverage delta
         run: python3 scripts/coverage_delta.py --base main --head ${{ github.sha }}
@@ -279,6 +287,101 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: python3 scripts/deploy_sentinel.py --rules compiled/sentinel_rules.json
+
+  deploy-securonix:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install sigma-cli pySigma-backend-securonix requests
+
+      - name: Compile rules to Securonix SPOTTER
+        run: |
+          sigma convert -t securonix \
+            -p pipelines/securonix_spotter.yml rules/ -o compiled/securonix_rules.json
+
+      - name: Deploy to Securonix via REST API
+        env:
+          SECURONIX_URL: ${{ secrets.SECURONIX_URL }}
+          SECURONIX_TOKEN: ${{ secrets.SECURONIX_TOKEN }}
+        run: python3 scripts/deploy_securonix.py --rules compiled/securonix_rules.json
+```
+
+The Securonix pipeline file maps Sigma's generic field names to Securonix's SPOTTER attribute naming convention and wraps each compiled query in the policy definition structure the REST API expects:
+
+```yaml
+# pipelines/securonix_spotter.yml
+name: Securonix SPOTTER Pipeline
+priority: 20
+transformations:
+  - id: securonix_process_fieldmapping
+    type: field_name_mapping
+    mapping:
+      Image: destinationprocessname
+      ParentImage: sourceprocessname
+      CommandLine: requestcmd
+      User: sourceuserid
+      Computer: devicehostname
+      EventID: baseeventid
+      TargetUserName: destinationuserid
+      TargetDomainName: destinationdomain
+      SourceIp: sourceaddress
+      DestinationIp: destinationaddress
+      DestinationPort: destinationport
+```
+
+```python
+# scripts/deploy_securonix.py — deploy compiled SPOTTER policies via Securonix REST API
+import requests, json, os, sys
+
+SECURONIX_URL = os.environ["SECURONIX_URL"]
+SECURONIX_TOKEN = os.environ["SECURONIX_TOKEN"]
+VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
+
+headers = {
+    "token": SECURONIX_TOKEN,
+    "Content-Type": "application/json"
+}
+
+def deploy_policy(policy_name, spotter_query, criticality="High"):
+    payload = {
+        "policyname": policy_name,
+        "policyDescription": f"Deployed via Detection-as-Code pipeline",
+        "criticality": criticality,
+        "query": spotter_query,
+        "enabled": True
+    }
+    resp = requests.post(
+        f"{SECURONIX_URL}/Snypr/ws/policy/createPolicy",
+        headers=headers,
+        json=payload,
+        verify=VERIFY_TLS
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rules", required=True)
+    args = parser.parse_args()
+
+    rules = json.loads(open(args.rules).read())
+    deployed, failed = 0, 0
+    for rule in rules:
+        try:
+            result = deploy_policy(rule["name"], rule["query"])
+            print(json.dumps({"status": "deployed", "policy": rule["name"], "result": result}))
+            deployed += 1
+        except Exception as e:
+            print(json.dumps({"status": "failed", "policy": rule["name"], "error": str(e)}))
+            failed += 1
+
+    print(f"\nDeployed: {deployed} | Failed: {failed}")
+    if failed > 0:
+        sys.exit(1)
 ```
 
 ### Step 6: Measure ATT&CK Coverage and Track Gaps
@@ -358,6 +461,7 @@ detection:
 | Rule Status | Sigma lifecycle state: `test` (experimental), `experimental`, `stable`, `deprecated`; only `stable` rules should deploy to production |
 | False-Positive Filter | Named `filter_*` condition in a Sigma rule's detection section that excludes known-benign patterns while preserving full audit trail of the exclusion reason |
 | Saved Search (Splunk) | The Splunk equivalent of a scheduled detection rule; sigma converts to `savedsearches.conf` stanzas for REST API deployment |
+| SPOTTER | Securonix's native query language for threat detection policies; pySigma compiles Sigma rules to SPOTTER via the `pySigma-backend-securonix` package and deploys them via the SNYPR REST API |
 
 ## Tools & Systems
 
@@ -367,7 +471,8 @@ detection:
 - **Splunk REST API**: `saved/searches` endpoint for programmatic rule creation and updates
 - **Azure Sentinel / Microsoft Defender API**: Analytics rules API for Sentinel KQL rule deployment
 - **MITRE ATT&CK Navigator**: Coverage visualization tool that accepts the exported JSON heatmap layer
-- **pySigma backends**: `pySigma-backend-splunk`, `pySigma-backend-microsoft365defender`, `pySigma-backend-elasticsearch`, `pySigma-backend-chronicle`
+- **pySigma backends**: `pySigma-backend-splunk`, `pySigma-backend-microsoft365defender`, `pySigma-backend-elasticsearch`, `pySigma-backend-chronicle`, `pySigma-backend-securonix`
+- **Securonix SNYPR REST API**: `createPolicy` / `updatePolicy` endpoints used by the deploy script to push compiled SPOTTER queries as detection policies
 
 ## Common Scenarios
 
@@ -404,7 +509,8 @@ detection:
   "compilation_targets": {
     "splunk_spl": {"compiled": 339, "errors": 3},
     "sentinel_kql": {"compiled": 341, "errors": 1},
-    "elastic_eql": {"compiled": 338, "errors": 4}
+    "elastic_eql": {"compiled": 338, "errors": 4},
+    "securonix_spotter": {"compiled": 340, "errors": 2}
   },
   "attack_coverage": {
     "techniques_covered": 127,
@@ -415,7 +521,8 @@ detection:
   },
   "deployment": {
     "splunk": {"deployed": 339, "updated": 12, "removed": 2},
-    "sentinel": {"deployed": 341, "updated": 8, "removed": 1}
+    "sentinel": {"deployed": 341, "updated": 8, "removed": 1},
+    "securonix": {"deployed": 340, "updated": 6, "removed": 0}
   },
   "false_positive_tuning_prs_open": 4
 }
