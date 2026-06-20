@@ -1,364 +1,72 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+It is a **hub**: always-on engineering rules are imported below; subsystem and reference detail live
+in the files linked under [Where things live](#where-things-live) and [Reference Docs](#reference-docs).
+
+> **Counts in this file are approximate.** The library grows continuously, so exact numbers drift. For current figures run: `find skills -name SKILL.md | wc -l` (skills), `find skills -name agent.py | wc -l` (scripts), `grep -rl "subdomain: ai-security" skills | wc -l` (AI skills).
 
 ## Project Overview
 
-**Display name: Cybersecurity Skills** (formerly Anthropic-Cybersecurity-Skills). The GitHub repo slug retains the original name; the project is independently maintained and not affiliated with Anthropic PBC.
+**Display name: Cybersecurity Skills** (formerly Anthropic-Cybersecurity-Skills). The GitHub repo slug retains the original name. This is a community project, independently maintained, **not affiliated with Anthropic PBC**. Apache 2.0 licensed (ADR-0009).
 
-This is a library of 802 cybersecurity skills for AI agents, mapped to 5 industry frameworks:
+A library of **800+ cybersecurity skills** for AI agents, mapped to 5 industry frameworks:
 - **MITRE ATT&CK Enterprise** — offensive techniques (218 unique techniques, 100% of 14 tactics)
 - **NIST Cybersecurity Framework 2.0** — risk management functions/categories
 - **MITRE ATLAS v5.5** — AI-specific threats
 - **MITRE D3FEND v1.3** — defensive countermeasures
 - **NIST AI RMF 1.0** — AI risk management
 
-Skills follow the `agentskills.io` open standard and are compatible with Claude Code, Cursor, GitHub Copilot, and 23+ other AI agent platforms. This is a community project, not affiliated with Anthropic PBC. Apache 2.0 licensed.
+Skills follow the `agentskills.io` open standard and are compatible with Claude Code, Cursor, GitHub Copilot, and 23+ other AI agent platforms (ADR-0001). ~50 skills cover four AI/agentic frameworks (OWASP LLM/MCP/Agentic Top 10s + MAESTRO) under `subdomain: ai-security` — full layer map and naming conventions are in [`skills/CLAUDE.md`](skills/CLAUDE.md).
 
-### AI Security Coverage (35 skills)
-The library includes full coverage of four AI/agentic security frameworks:
-- **OWASP LLM Top 10 2025** (LLM01–LLM10) — 9 new skills covering LLM02–LLM10; LLM01 covered by `detecting-ai-model-prompt-injection-attacks`
-- **OWASP MCP Top 10 v0.1** (MCP01–MCP10) — 10 skills under `mcp-*` prefix
-- **OWASP Top 10 for Agentic Applications 2026** (ASI01–ASI10) — 10 skills under `agent-*`, `agentic-*`, `rogue-*`, `human-agent-*`, `securing-inter-*` prefixes
-- **MAESTRO Framework** (7 layers + cross-layer threats) — 12 skills providing complete layer-by-layer coverage:
-  - Threat modeling: `performing-maestro-threat-modeling`
-  - L1 Foundation Models: `ai-model-extraction-and-reprogramming-defense` (L1-T02/T06), `adversarial-robustness-and-evasion-defense` (L1-T01/T03/T07)
-  - L2 Data Operations: `rag-pipeline-security-and-data-provenance`, `ai-data-operations-availability-and-integrity` (L2-T03/T04)
-  - L3 Agent Frameworks: `ai-agent-framework-security` (all L3 threats)
-  - L4 Deployment & Infrastructure: `ai-workload-infrastructure-hardening`
-  - L5 Evaluation & Observability: `ai-evaluation-security-and-observability-hardening`
-  - L6 Security & Compliance: `ai-governance-and-regulatory-compliance` (compliance side), `ai-security-tool-adversarial-defense` (threat side)
-  - L7 Agent Ecosystem: `ai-agent-ecosystem-security` (all L7 threats)
-  - Cross-Layer Mitigations: `ai-explainability-and-formal-verification` (XAI, formal verification, reputation systems)
+## Where things live
 
-All 41 AI security skills use `subdomain: ai-security` (an accepted extension to the standard 26 subdomains).
-
-## MCP Servers
-
-Seven MCP servers are registered in `.mcp.json` and load automatically when Claude Code is launched from this directory:
-
-| Server | Tools | Backend required | Detailed docs |
-|---|---|---|---|
-| `phantom-skills` | 6 | Skill library only (this repo) | Below |
-| `cve-intel` | 27 | External clone at `~/Desktop/cve-mcp-server` | Below |
-| `defectdojo` | 8 | A reachable DefectDojo instance (env vars) | Below |
-| `jira` | 6 | A reachable Jira (env vars) | Below |
-| `infra` | 13 | `kubectl`, `aws`, `terraform`, `helm` on PATH | Brief below |
-| `dast` | 11 | OWASP ZAP and/or Burp running locally | Brief below |
-| `burp-pentest` | 10 | Burp Suite Pro extension at `127.0.0.1:9877` | Brief below |
-
-**Verifying load:** in any Claude Code session started from this dir, run `/mcp`. Each server should show `connected` with its tool count. If anything shows `failed`, click the entry to view the server's stderr log.
-
-### phantom-skills
-Exposes the skill library to Claude Code as 6 tools: `search_skills`, `load_skill`, `run_skill_agent`, `list_subdomains`, `search_soc_skills`, `get_platform_adapted_skill`.
-```json
-{ "command": "python3", "args": ["mcp/phantom_mcp_server.py"] }
-```
-
-**Dependency: the `mcp` Python SDK.** Despite earlier docs claiming "no extra dependencies," `mcp/phantom_mcp_server.py` imports `mcp.server`. On a fresh checkout the import succeeds as a namespace package (`mcp.__file__ is None`) but `mcp.server.Server` is missing, so the server fails to start with a silent stderr log. Install with:
-
-```bash
-# Homebrew Python (PEP 668-managed) — use --break-system-packages:
-python3 -m pip install --break-system-packages mcp
-
-# Other Python environments (asdf, pyenv, system pip without PEP 668):
-python3 -m pip install mcp
-```
-
-Verify:
-```bash
-python3 -c "from mcp.server import Server; print('OK')"
-```
-
-The `mcp` package must be installed in **whichever Python `.mcp.json`'s `python3` resolves to** at launch time (`which python3` from the shell that launches `claude`). Using a venv requires editing `.mcp.json` to point at `.venv/bin/python` — this is a committed file, so changes affect all teammates.
-
-Phantom reads `index.json` at startup. Once installed correctly, `/mcp` in Claude Code shows `phantom-skills connected 4 tools`.
-
-**Known limitation:** `index.json` only stores `name/description/domain/path` per skill; `list_subdomains` and `search_skills` therefore return `subdomain: "unknown"` for all skills. To fix, the MCP server needs to parse SKILL.md frontmatter directly (not yet implemented).
-
-**Troubleshooting:**
-| Symptom | Cause | Fix |
+| Area | Guide (loads when relevant) | What's there |
 |---|---|---|
-| `phantom-skills failed` in `/mcp` | `mcp.server` not importable in the Python that launched | Re-run install in the right Python (`which python3` first) |
-| Server starts but tools return errors | `ANTHROPIC_API_KEY` not exported in the shell that launched `claude` | `export ANTHROPIC_API_KEY=sk-ant-...` then relaunch |
-| Tools list empty / wrong cwd | `claude` launched from outside the project root | `cd` to repo root before running `claude` |
-| `pip install` blocked with PEP 668 error | Homebrew or other system-managed Python | Add `--break-system-packages` (safe for a single package on a dev box) |
+| Authoring skills | [`skills/CLAUDE.md`](skills/CLAUDE.md) | Directory structure, frontmatter schema, body sections, 26 subdomains, AI coverage + naming, how to add a skill/script, validation |
+| Phantom agent | [`phantom/CLAUDE.md`](phantom/CLAUDE.md) | Module map, the two agent generations, the Agent SDK spike, venv/runtime situation |
+| MCP server code | [`mcp/CLAUDE.md`](mcp/CLAUDE.md) | Server file map, `phantom_mcp_server` internals, the `mcp` SDK dependency, rich index |
+| Engineering rules | [`.claude/conventions.md`](.claude/conventions.md) | Security conventions, generated files, CI workflows (imported below — always on) |
+| Decisions (the *why*) | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture Decision Record |
 
-### cve-intel (mukul975/cve-mcp-server)
-27-tool MCP server for live CVE intelligence: NVD lookup, EPSS scores, CISA KEV catalog, PoC detection, Shodan exposure, ATT&CK technique mapping, and composite risk scoring.
-
-**Install:**
-```bash
-git clone https://github.com/mukul975/cve-mcp-server ~/Desktop/cve-mcp-server
-cd ~/Desktop/cve-mcp-server
-pip install -e .
-```
-
-**Registration in `.mcp.json`:**
-```json
-{ "command": "python3", "args": ["-m", "cve_mcp.server"] }
-```
-Run `python3 -m cve_mcp.server` from `~/Desktop/cve-mcp-server/` to verify startup. The server pre-fetches the CISA KEV catalog on boot and caches all API responses in SQLite (`~/.cache/cve_mcp/vuln_cache.db`).
-
-**Risk scoring formula:** EPSS 35% + KEV 30% + CVSS 20% + PoC 15%; ×1.5 multiplier when both KEV and PoC are present.
-
-### defectdojo
-Triages and updates DefectDojo findings without leaving Claude Code — 8 tools:
-
-| Tool | Purpose |
-|---|---|
-| `dd_list_findings` | List findings with filters (test, severity, active, verified) |
-| `dd_get_finding` | Fetch a single finding by ID |
-| `dd_update_finding` | PATCH any field — severity, active, verified, false_p, mitigated |
-| `dd_add_note` | POST a triage note to a finding |
-| `dd_list_products` / `dd_list_engagements` | Enumerate DefectDojo state |
-| `dd_weekly_activity` | Generate weekly review summary |
-| `dd_get_metrics` | Aggregate severity counts / SLA stats |
-
-**Env vars (set before launching `claude`):**
-```bash
-export DEFECTDOJO_URL=https://defectdojo.example.com
-export DEFECTDOJO_API_KEY=<token>     # rotate routinely; treat as a production credential
-```
-
-The defaults in `.mcp.json` point at `localhost:8080` and an empty API key — override via shell env, never edit `.mcp.json` to embed the token (it's committed).
-
-**Use case:** triaging findings, adding verified-FP notes, flipping severity. Replaces hand-rolled `curl`/`urllib` calls against the v2 REST API.
-
-### jira
-Creates and tracks security tickets — 6 tools: `jira_create_issue`, `jira_search`, `jira_get_issue`, `jira_add_comment`, `jira_transition_issue`, `jira_weekly_activity`.
-
-**Env vars:**
-```bash
-export JIRA_URL=https://[org].atlassian.net
-export JIRA_USER=<email>
-export JIRA_TOKEN=<api-token>
-export JIRA_PROJECT_KEY=SEC     # default project key; override per call
-```
-
-Useful for converting a triaged DefectDojo finding into a tracked remediation ticket, or for weekly activity summaries.
-
-### infra · dast · burp-pentest (brief)
-
-| Server | Tool prefix | Notes |
-|---|---|---|
-| `infra` | `kubectl_*`, `aws_*`, `terraform_*`, `helm_*`, `write_manifest` | Executes against your local AWS/k8s credentials. Treat as production-capable — every `aws_run` / `kubectl_apply` is a real action. |
-| `dast` | `dast_*`, `zap_*`, `burp_*` | Requires ZAP at `localhost:8080` and/or Burp at `localhost:1337` (set `ZAP_API_KEY` / `BURP_API_KEY` env vars). |
-| `burp-pentest` | `burp_*` (proxy history, scanner issues, fuzz, decode, payload-gen) | Requires the custom Burp extension listening at `127.0.0.1:9877`. See `burp-extension/` if present. |
-
-All three are safe to leave registered — they fail closed when the backend is unreachable; Claude Code just shows `failed` in `/mcp` rather than crashing the session.
+Generated files (never hand-edit): `index.json`, `mappings/attack-navigator-layer.json`, `.claude-plugin/marketplace.json`. Details in [`.claude/conventions.md`](.claude/conventions.md).
 
 ## Key Commands
 
-### Phantom Agent (Claude API-powered chatbot over the skill library)
+**Validate skills** (mirrors CI): logic is inline in `.github/workflows/validate-skills.yml`; extract and run the embedded Python. See [`skills/CLAUDE.md`](skills/CLAUDE.md).
+
+**Regenerate `index.json`** (mirrors CI): logic is inline in `.github/workflows/update-index.yml`. Run manually or trigger via GitHub Actions (`workflow_dispatch`).
+
+**Run the Phantom Agent:**
 ```bash
 cd phantom
 pip install anthropic
 export ANTHROPIC_API_KEY=sk-...
 python main.py
 ```
-Slash commands inside phantom: `/mode <name>`, `/modes`, `/save`, `/load`, `/sessions`, `exit`
+In-REPL slash commands: `/mode <name>`, `/modes`, `/save`, `/load`, `/sessions`, `exit`. (The Agent SDK spike `phantom_sdk.py` runs differently — see [`phantom/CLAUDE.md`](phantom/CLAUDE.md).)
 
-Phantom can execute `scripts/agent.py` files directly via the `run_skill_agent` tool. Skills with executable scripts:
+## MCP Servers
 
-**AI red-teaming (new):**
-- `llm-system-prompt-leakage-prevention` — `agent.py --model <model> --system-prompt "..."` — runs 11 extraction probes + canary token detection
-- `llm-excessive-agency-prevention` — `agent.py --manifest tools.json --function "..." --required tool1,tool2` — audits tool manifest for excess permissions
-- `llm-output-validation-and-sanitization` — `agent.py --model <model> --system-prompt "..."` — probes for XSS/SQLi/SSRF/cmd injection in LLM outputs
-- `llm-sensitive-information-disclosure-prevention` — `agent.py --model <model> --system-prompt "..."` or `--scan-file log.jsonl` — detects PII/credential leakage
-- `llm-data-and-model-poisoning-defense` — `agent.py dataset-scan --dataset data.jsonl` or `agent.py backdoor-probe --model <model>` — scans training data and probes for backdoors
-- `agent-goal-hijacking-detection` — `agent.py --goal "..." --log agent.jsonl` — detects goal drift and injection patterns in agent logs
-- `rogue-agent-detection-and-containment` — `agent.py --log telemetry.jsonl` — detects reward hacking, self-replication, behavioural drift, and collusion
-- `detecting-ai-model-prompt-injection-attacks` — existing script, DeBERTa-based classifier
+Seven MCP servers are registered in `.mcp.json` and load automatically when Claude Code is launched from this directory. They **fail closed** when their backend is unreachable — safe to leave registered (ADR-0007). Per-server setup & troubleshooting: [`.claude/mcp-servers.md`](.claude/mcp-servers.md). Server code internals: [`mcp/CLAUDE.md`](mcp/CLAUDE.md).
 
-**Application security:**
-- `performing-asvs-compliance-assessment` — `agent.py init --app "Name" --url "https://..." --level 2` then `agent.py report --assessment file.json` — generates ASVS v4.0.3 worksheet and conformance report (no API key required)
-
-**Threat modeling:**
-- `performing-stride-threat-modeling` — `agent.py init --system "Name"` → `agent.py analyze --components file.json` → `agent.py report --threats file.json` — applies STRIDE per component type; generates prioritized threat register (no API key required)
-- `performing-pasta-threat-modeling` — `agent.py scaffold --system "Name"` → `agent.py analyze --worksheet file.json` → `agent.py report --risks file.json` — 7-stage risk-centric PASTA with business impact scoring (no API key required)
-- `threat-modeling-for-ai-ml-systems` — `agent.py init --system "Name" --arch-type agentic|rag|llm_app|training_pipeline|multi_agent` → `agent.py analyze` → `agent.py report` — applies OWASP LLM/Agentic Top 10 + MITRE ATLAS taxonomy to AI components (no API key required)
-- `performing-maestro-threat-modeling` — `agent.py init --system "Name" --arch-type single|multi|hierarchical|distributed|conversational|task_oriented|human_in_loop|self_learning` → `agent.py analyze --assessment file.json` → `agent.py report --assessment file.json` — applies MAESTRO 7-layer framework (54 threats per typical multi-agent system, 5 cross-layer threats); highlights architecture-pattern-specific risks (no API key required)
-
-**AI security infrastructure auditing (MAESTRO gap coverage):**
-- `rag-pipeline-security-and-data-provenance` — `agent.py audit --config rag_config.json` / `agent.py scan-documents --dir ./docs` — audits RAG pipeline security (12 controls: injection filters, vector DB encryption/access/isolation, embedding integrity, data provenance) and scans documents for 10 prompt injection patterns (no API key required)
-- `ai-model-extraction-and-reprogramming-defense` — `agent.py audit --config model_api_config.json` — audits model API for 9 extraction controls (rate limiting, anomaly detection, output perturbation, differential privacy) and 5 reprogramming controls (policy layer, logit masking, fine-tuning API access); reports separate extraction/reprogramming risk scores (no API key required)
-- `ai-evaluation-security-and-observability-hardening` — `agent.py audit-eval --config eval_config.json` / `agent.py audit-telemetry --config telemetry_config.json` — audits eval pipeline (10 controls: dataset signing, adversarial regression, isolation) and telemetry stack (11 controls: tamper-evident logging, PII redaction, behavioral baselines, ML-based anomaly detection) (no API key required)
-- `ai-governance-and-regulatory-compliance` — `agent.py assess --system "Name" --risk-tier high|limited|minimal --framework eu-ai-act|nist-ai-rmf|iso-42001|all` then `agent.py score --checklist compliance_report.json` — generates compliance checklist (EU AI Act Articles 9-16/26/49/72, NIST AI RMF GOVERN/MAP/MEASURE/MANAGE, ISO 42001 Clauses 4-10); scores filled-in checklist as gap report (no API key required)
-- `ai-workload-infrastructure-hardening` — `agent.py scan --config infra_config.json` / `agent.py scan-k8s --manifest deployment.json` — audits AI workload infra (16 controls: image signing/scanning, non-root execution, resource limits, network policy, RBAC, admission controllers, agent-to-vectorDB/secret-store isolation, vault integration) and parses raw `kubectl get deployment -o json` output for K8s-native checks (no API key required)
-- `ai-agent-framework-security` — `agent.py audit --config framework_config.json` — audits orchestration frameworks (LangChain, AutoGen, CrewAI, etc.) for 15 MAESTRO L3 controls: dependency pinning/integrity/CVE scanning, tool allowlisting, schema validation, unsafe pattern blocking (eval/exec/shell=True), code execution sandboxing, output sanitization, prompt injection filter, framework API rate limiting, audit logging, plugin vetting (no API key required)
-- `ai-agent-ecosystem-security` — `agent.py audit --config ecosystem_config.json` — audits agent registries and marketplaces for 18 MAESTRO L7 controls: registry signing, capability attestation, agent vetting/revocation, cryptographic agent identity, mutual authentication, per-action attribution, non-repudiable append-only logs, OAuth scope minimization, webhook signature verification, malicious agent filtering, Sybil-resistant reputation scoring, pricing anomaly detection (no API key required)
-- `ai-security-tool-adversarial-defense` — `agent.py audit --config security_tool_config.json` — audits AI-based security tools (ML IDS, SIEM detectors, fraud classifiers) for 20 MAESTRO L6 threat-side controls: training data signing/provenance/access, adversarial samples in training, poisoning detection, evasion detection, output consistency monitoring, per-decision explainability, kill switch, bias coverage, adversarial regression testing, model update authentication (no API key required)
-- `adversarial-robustness-and-evasion-defense` — `agent.py probe --config model_robustness_config.json` (L1-T01/T07: adversarial examples + sponge defenses, 10 controls) / `agent.py backdoor-scan --config backdoor_config.json` (L1-T03: weight-level backdoor detection, 6 controls) — audits for input preprocessing, adversarial training, OOD detection, complexity scoring, compute budgets, output consistency, model provenance, activation clustering analysis, Neural Cleanse posture (no API key required)
-- `ai-data-operations-availability-and-integrity` — `agent.py audit --config data_ops_config.json` — audits databases, event streams, and object stores for 22 MAESTRO L2 availability/integrity controls (L2-T03/T04): encryption in transit/at rest, connection limits, query timeouts, replication/failover, backups, integrity checksums, change data capture, event stream authentication/message integrity, object versioning/immutability, health monitoring, circuit breakers (no API key required)
-- `ai-explainability-and-formal-verification` — `agent.py audit-xai --config xai_config.json` (11 XAI controls: per-decision local/global explanations, counterfactuals, auditor access, forensic reconstruction, tamper-evident storage, appeal mechanisms) / `agent.py verify-goals --manifest agent_goals.json` (10 formal verification controls: formal goal/constraint specification, runtime constraint checker, reward hacking testing, invariant monitoring) / `agent.py reputation-audit --config reputation_config.json` (8 Sybil-resistance controls: identity verification, coordinated-rating detection, reputation decay, bootstrap protection) (no API key required)
-
-**SOC / SIEM:**
-- `securonix-siem-operations` — `agent.py query --use-case brute-force|lateral-movement|data-exfiltration|insider-threat|cloud-abuse|ransomware` / `agent.py convert --spl "..."` / `agent.py triage --alert-type <type>` — SPOTTER query generation, SPL→SPOTTER conversion, triage checklists (no API key required)
-
-**Vulnerability management (AWS — full autonomous pipeline):**
-
-Phantom can run the full VM pipeline end-to-end when given AWS credentials:
-
-1. **Collect** — `aws-inspector-findings-reporter`: `agent.py report --start-date 2026-03-01 --end-date 2026-03-31 --regions us-east-1,us-west-2 --kev` — pulls Inspector v2 findings, enriches with CISA KEV + EPSS, outputs `inspector_report.json`; exits 1 on CRITICAL (requires `pip install boto3`)
-2. **Enrich** — use `cve-intel` MCP tools (`search_cve`, `get_risk_score`, `check_kev_status`) to cross-reference each CVE-ID in the Inspector report for live EPSS/PoC/ATT&CK context
-3. **Prioritize** — `aws-vulnerability-remediation-prioritization`: `agent.py prioritize --findings inspector_report.json --kev` — composite score: `severity_weight × (1 + EPSS) × KEV_multiplier(3×) × log(affected_resources + 1)`; splits backlog by team (EC2/ECR/Lambda); surfaces "patch one, fix many" actions
-
-All three steps produce structured JSON, can be chained by Phantom autonomously, and the final prioritized list can be written to file via `write_file`.
-
-**API security (pre-existing):**
-- `conducting-api-security-testing`, `testing-api-authentication-weaknesses`, `testing-api-for-broken-object-level-authorization`, `performing-api-rate-limiting-bypass`, `exploiting-api-injection-vulnerabilities`, `detecting-api-enumeration-attacks`, `testing-api-security-with-owasp-top-10`
-
-All scripts output structured JSON, accept `--output <file>` to save reports, and exit with code 1 on HIGH/CRITICAL findings (CI-gate compatible).
-
-### Validate Skills (mirrors CI)
-The validation logic lives in `.github/workflows/validate-skills.yml` as an inline Python script. To run it locally, extract and run the embedded Python. It checks:
-- Required frontmatter fields: `name`, `description`, `domain`, `subdomain`, `tags`, `version`, `author`, `license`
-- `name` must be kebab-case, max 64 characters, unique across all skills
-- `domain` must be `cybersecurity`
-
-### Regenerate index.json (mirrors CI)
-The index-building logic lives in `.github/workflows/update-index.yml` as an inline Python script. Run it manually or trigger via GitHub Actions (`workflow_dispatch`).
-
-## Architecture
-
-### Skill Directory Structure
-Each of the 796 skills lives in `skills/<skill-name>/`:
-```
-skills/<skill-name>/
-├── SKILL.md          # Primary skill definition (required)
-├── LICENSE           # Apache-2.0 copy (required)
-├── references/
-│   └── api-reference.md   # Severity scales, function signatures (optional)
-└── scripts/
-    └── agent.py           # Executable helper script (optional)
-```
-
-### SKILL.md Frontmatter Schema
-```yaml
----
-name: kebab-case-unique-name          # required, max 64 chars
-description: >-
-  Multi-line description...
-domain: cybersecurity                  # always this value
-subdomain: <one of 26 subdomains>     # see list below
-tags:
-  - keyword1
-  - keyword2
-version: '1.0'
-author: github-username
-license: Apache-2.0
-
-# Optional framework mappings:
-nist_csf: [RS.AN-01, DE.AE-02]       # NIST CSF 2.0 function/category codes
-atlas_techniques: [AML.T0047]         # MITRE ATLAS technique IDs
-d3fend_techniques: [Executable Denylisting]
-nist_ai_rmf: [MEASURE-2.6]
----
-```
-
-MITRE ATT&CK technique IDs (e.g., `T1059.001`) are stored in the `tags` array, not a dedicated field.
-
-### SKILL.md Body Sections (in order)
-1. **When to Use** — agent trigger conditions
-2. **Prerequisites** — tools, access, environment
-3. **Workflow** / **Steps** — numbered steps with real commands/code
-4. **Key Concepts** — markdown table of terms
-5. **Tools & Systems** — reference table
-6. **Common Scenarios** — real-world use cases
-7. **Output Format** — example JSON/structured output
-
-### 26 Valid Subdomains
-`web-application-security`, `network-security`, `penetration-testing`, `red-teaming`, `digital-forensics`, `malware-analysis`, `threat-intelligence`, `cloud-security`, `container-security`, `identity-access-management`, `cryptography`, `vulnerability-management`, `compliance-governance`, `zero-trust-architecture`, `ot-ics-security`, `devsecops`, `soc-operations`, `incident-response`, `phishing-defense`, `ransomware-defense`, `api-security`, `mobile-security`, `endpoint-security`, `threat-hunting`, `application-security`, `data-security`
-
-### Generated / Auto-maintained Files
-- **`index.json`** — autogenerated catalog of all skills; do not edit manually, regenerate via CI
-- **`mappings/attack-navigator-layer.json`** — pre-built ATT&CK Navigator heatmap (96KB)
-- **`.claude-plugin/marketplace.json`** — version is bumped automatically by the `sync-marketplace-version.yml` workflow on GitHub release
-
-### Phantom Agent (`phantom/`)
-A standalone Claude API chatbot that loads skills dynamically:
-- `main.py` — interactive REPL, model `claude-opus-4-6`, 7 persona modes (general, red-team, appsec, threat-hunting, cloud, forensics, soc)
-- `skill_loader.py` — discovers and loads SKILL.md files matching user queries; reads `index.json` at import time
-- `executor.py` — runs `scripts/agent.py` files as subprocesses; 60-second timeout per script
-- `tools.py` — 4 tool definitions: `search_skills`, `load_skill`, `run_skill_agent`, `write_file`
-- `sessions/` — persisted conversation history (JSON)
-
-**Tool dispatch behaviour:**
-- `run_skill_agent` is only called when the user explicitly asks to execute a script; always confirm target and args
-- `write_file` writes relative to the project root; always show content to user before writing
-- Scripts that exit with code 1 indicate a HIGH/CRITICAL finding — Phantom will surface this in its response
-
-### CI Workflows
-| Workflow | Trigger | Purpose |
+| Server | Tools | Backend required |
 |---|---|---|
-| `validate-skills.yml` | Push/PR touching `skills/` | Validates all SKILL.md frontmatter |
-| `update-index.yml` | Push to `main` or manual | Regenerates `index.json` |
-| `sync-marketplace-version.yml` | GitHub release published | Bumps plugin version in marketplace.json |
+| `phantom-skills` | 6 | Skill library only (this repo) |
+| `cve-intel` | 27 | External clone at `~/Desktop/cve-mcp-server` |
+| `defectdojo` | 8 | A reachable DefectDojo instance (env vars) |
+| `jira` | 6 | A reachable Jira (env vars) |
+| `infra` | 13 | `kubectl`, `aws`, `terraform`, `helm` on PATH — **production-capable** |
+| `dast` | 11 | OWASP ZAP and/or Burp running locally |
+| `burp-pentest` | 10 | Burp Suite Pro extension at `127.0.0.1:9877` |
 
-All workflows use inline Python 3 on `ubuntu-latest` — no npm or Makefile.
+**Verifying load:** run `/mcp` in any session started from this dir; each server should show `connected` with its tool count. Secrets come from shell env vars — never embed tokens (`.mcp.json` is committed).
 
-## Security Hardening (Applied April 2026)
+@.claude/conventions.md
 
-A static audit of all 773 `scripts/agent.py` files and 796 `SKILL.md` files was run and saved to `skill_security_audit.json` (1,496 findings: 51 CRITICAL, 220 HIGH, 25 MEDIUM, 1,200 LOW — many LOWs are false positives from detection-rule content).
-
-**Fixes applied to 36 scripts:**
-
-| Issue | Pattern fixed | Scripts affected |
-|---|---|---|
-| Hardcoded credentials | `password = "..."` → `os.environ.get("...")` | `securing-container-registry-with-harbor`, `exploiting-active-directory-with-bloodhound`, `performing-wireless-security-assessment-with-kismet` |
-| `requests` TLS bypass | `verify=False` → `verify=VERIFY_TLS` | 32 exploitation/pentest/recon scripts |
-| `pickle.load` | Added `# nosec B301` + trusted-source comment | `detecting-command-and-control-over-dns` |
-
-**VERIFY_TLS pattern** (applied to all affected scripts):
-```python
-VERIFY_TLS = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
-# Usage: requests.get(url, verify=VERIFY_TLS)
-```
-Set `SKIP_TLS_VERIFY=1` only when testing against self-signed certs in lab environments.
-
-**Credential env vars per skill:**
-- `HARBOR_PASSWORD` — `securing-container-registry-with-harbor`
-- `NEO4J_PASSWORD` — `exploiting-active-directory-with-bloodhound` (falls back to `bloodhound`)
-- `KISMET_USERNAME` / `KISMET_PASSWORD` — `performing-wireless-security-assessment-with-kismet`
-
-## DVMCP Testing Reference
-
-Scripts for testing skills against [DVMCP (Damn Vulnerable MCP Server)](https://github.com/halencarjunior/dvmcp) challenges live in `examples/dvmcp/`:
-- `detect_challenge2.py` — implements `mcp-tool-poisoning-detection-and-defense` workflow against Challenge 2 (port 9002)
-- `mcp_command_injection_audit.py` — implements `mcp-command-injection-prevention` workflow: static regex scan + 8 live injection probes
-
-**Start DVMCP:** `docker compose up -d` from the DVMCP repo root (challenges on ports 9001–9010).
-
-**Challenge 2 vulnerabilities confirmed:**
-- Command injection via `\n` newline bypass: `split()[0]` treats newline as whitespace, so `"ls\nid"` passes the allowlist check while injecting `id` when `shell=True`
-- Path traversal via `startswith('/tmp/safe/')` without `Path.resolve()`: `/tmp/safe/../../etc/passwd` passes the check
-
-## Adding a New Skill
-
-1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter (see schema above).
-2. Copy `LICENSE` from any existing skill directory into the new directory.
-3. Follow the required body section order.
-4. Optionally add `references/api-reference.md` and `scripts/agent.py`.
-5. Push/open a PR — CI validates automatically; `index.json` is regenerated on merge to `main`.
-
-### Adding an Executable Script (`scripts/agent.py`)
-
-Scripts are optional but make a skill directly runnable by Phantom via `run_skill_agent`. Conventions:
-- Use `argparse` for all CLI arguments; include `--output <file>` defaulting to a JSON report filename
-- Print a `json.dumps(report, indent=2)` summary to stdout so Phantom can read it
-- Exit with `sys.exit(1)` when overall risk is HIGH or CRITICAL (CI-gate compatible)
-- Avoid hard dependencies beyond stdlib + `anthropic`; guard optional imports with try/except
-- Do not hard-code API keys; read from `os.environ.get("ANTHROPIC_API_KEY")`
-- Keep scripts self-contained — no imports from other skill directories
-
-### AI Security Skill Naming Conventions
-
-| Framework | Prefix pattern | Example |
-|---|---|---|
-| OWASP LLM Top 10 | `llm-<descriptor>` | `llm-system-prompt-leakage-prevention` |
-| OWASP MCP Top 10 | `mcp-<descriptor>` | `mcp-tool-poisoning-detection-and-defense` |
-| OWASP Agentic Top 10 | `agent-`, `agentic-`, `rogue-`, `human-agent-`, `securing-inter-` | `agent-goal-hijacking-detection` |
-| MAESTRO Framework | `performing-maestro-`, `rag-pipeline-`, `ai-model-`, `ai-evaluation-`, `ai-governance-`, `ai-workload-` | `performing-maestro-threat-modeling` |
-
-All AI security skills use `subdomain: ai-security`. Do not add `ai-security` to the official 26-subdomain list in this file — it is an accepted extension used only for these skills.
+## Reference Docs
+- **[docs/DECISIONS.md](docs/DECISIONS.md)** — Architecture Decision Record: the *why* behind the taxonomy, naming, CI, security, and Phantom choices. Read before reversing a convention; add an ADR when making a non-obvious decision.
+- **[docs/SCRIPTS.md](docs/SCRIPTS.md)** — full catalog of runnable `agent.py` scripts by category, with invocation examples (AI red-teaming, threat modeling, MAESTRO auditing, SOC/SIEM, AWS VM pipeline, API security).
+- **[docs/DVMCP.md](docs/DVMCP.md)** — testing skills against the Damn Vulnerable MCP Server (`examples/dvmcp/`).
+- **[.claude/mcp-servers.md](.claude/mcp-servers.md)** — per-server MCP setup & troubleshooting.
+- Subsystem guides: [`skills/CLAUDE.md`](skills/CLAUDE.md), [`phantom/CLAUDE.md`](phantom/CLAUDE.md), [`mcp/CLAUDE.md`](mcp/CLAUDE.md) — auto-load when you work in those directories.

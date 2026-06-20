@@ -1,5 +1,7 @@
 .claude/*
 !.claude/commands/
+!.claude/conventions.md
+!.claude/mcp-servers.md
 teams/
 node_modules/
 __pycache__/
@@ -20,3 +22,6 @@ AUDIT_REPORT.md
 pentest-reports/
 fortark/
 terraform.tfvars
+
+# Phantom local venv (SDK spike runtime)
+phantom/.venv/

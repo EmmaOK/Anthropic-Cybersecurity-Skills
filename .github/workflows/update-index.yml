@@ -27,6 +27,40 @@ jobs:
           skills_dir = "skills"
           skills = []
 
+          def parse_frontmatter(fm):
+              """Minimal stdlib YAML-frontmatter parser: scalars, block scalars
+              (>, >-, |, |-), block lists (- item), and flow lists ([a, b])."""
+              data, lines, i = {}, fm.split("\n"), 0
+              while i < len(lines):
+                  m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", lines[i])
+                  if not m:
+                      i += 1
+                      continue
+                  key, val = m.group(1), m.group(2).strip()
+                  if val in (">", ">-", ">+", "|", "|-", "|+"):       # block scalar
+                      block, i = [], i + 1
+                      while i < len(lines) and (not lines[i].strip() or lines[i][:1] in (" ", "\t")):
+                          block.append(lines[i].strip())
+                          i += 1
+                      data[key] = " ".join(x for x in block if x).strip()
+                  elif val == "":                                      # maybe a block list
+                      items, j = [], i + 1
+                      while j < len(lines) and re.match(r"^\s*-\s+", lines[j]):
+                          items.append(re.sub(r"^\s*-\s+", "", lines[j]).strip().strip('"').strip("'"))
+                          j += 1
+                      if items:
+                          data[key], i = items, j
+                      else:
+                          data[key], i = "", i + 1
+                  elif val.startswith("[") and val.endswith("]"):      # flow list
+                      inner = val[1:-1].strip()
+                      data[key] = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+                      i += 1
+                  else:                                                # scalar
+                      data[key] = val.strip('"').strip("'")
+                      i += 1
+              return data
+
           for skill_name in sorted(os.listdir(skills_dir)):
               skill_md = os.path.join(skills_dir, skill_name, "SKILL.md")
               if not os.path.isfile(skill_md):
@@ -34,20 +68,21 @@ jobs:
               with open(skill_md, "r", encoding="utf-8") as f:
                   content = f.read()
               fm_match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
-              description = ""
-              if fm_match:
-                  m = re.search(r"^description:\s*(.+)$", fm_match.group(1), re.MULTILINE)
-                  if m:
-                      description = m.group(1).strip().strip('"')
+              fm = parse_frontmatter(fm_match.group(1)) if fm_match else {}
+              tags = fm.get("tags", [])
+              if not isinstance(tags, list):
+                  tags = []
               skills.append({
-                  "name": skill_name,
-                  "description": description,
+                  "name": fm.get("name") or skill_name,
+                  "description": fm.get("description", ""),
                   "domain": "cybersecurity",
+                  "subdomain": fm.get("subdomain", "unknown"),
+                  "tags": tags,
                   "path": f"skills/{skill_name}"
               })
 
           index = {
-              "version": "1.1.0",
+              "version": "1.2.0",
               "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "repository": "https://github.com/mukul975/Anthropic-Cybersecurity-Skills",
               "domain": "cybersecurity",
