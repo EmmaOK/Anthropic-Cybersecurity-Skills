@@ -3,11 +3,15 @@ name: aws-inspector-findings-reporter
 description: >-
   Pulls vulnerability findings from AWS Inspector v2 via the boto3 API and generates
   structured monthly reports aggregated by severity, resource type (EC2/ECR/Lambda),
-  region, and AWS account. Enriches findings with CISA Known Exploited Vulnerability (KEV)
-  catalog cross-reference and EPSS exploit-probability scores embedded in Inspector findings.
-  Produces trend comparison reports across two reporting periods to track remediation velocity.
-  Designed for scheduled automation (Lambda, GitHub Actions cron) and CI gating — exits with
-  code 1 when CRITICAL findings are present.
+  region, and AWS account. Supports multi-account organizations with team-based grouping:
+  a teams.json config maps account IDs to team names, and the script assumes a cross-account
+  IAM role in each account (sts:AssumeRole) to collect findings independently, then produces
+  per-team breakdowns alongside the overall report. Optionally writes a separate JSON report
+  file per team (--split-by-team). Enriches findings with CISA Known Exploited Vulnerability
+  (KEV) catalog cross-reference and EPSS exploit-probability scores. Produces trend comparison
+  reports across two reporting periods, including per-team deltas. Designed for scheduled
+  automation (Lambda, GitHub Actions cron) and CI gating — exits with code 1 when CRITICAL
+  findings are present.
 domain: cybersecurity
 subdomain: vulnerability-management
 tags:
@@ -37,6 +41,7 @@ d3fend_techniques:
 ## When to Use
 
 - Generating monthly vulnerability reports from AWS Inspector v2 across one or more AWS accounts
+- Grouping findings from multiple AWS accounts by team (e.g. platform, security, data, frontend) using a `teams.json` config, with per-team severity/KEV/CVE breakdowns and optional per-team report files
 - Automating scheduled reporting from Lambda, GitHub Actions, or a cron job
 - Identifying findings associated with actively exploited CVEs (CISA KEV catalog) or high-exploit-probability vulnerabilities (EPSS ≥ 0.7)
 - Tracking remediation velocity by comparing the current month's report against the previous month
@@ -47,7 +52,8 @@ d3fend_techniques:
 ## Prerequisites
 
 - AWS credentials configured (`~/.aws/credentials`, environment variables, or IAM instance role)
-- IAM permissions: `inspector2:ListFindings`, `inspector2:ListCoverage`
+- IAM permissions: `inspector2:ListFindings`
+- Cross-account team mode: `sts:AssumeRole` on the target role in each member account
 - AWS Inspector v2 enabled in each target region
 - Python 3.9+
 - `boto3` installed: `pip install boto3`
@@ -66,14 +72,35 @@ python agent.py report \
   --output     report_march_2026.json
 ```
 
-For multi-account orgs, assume the delegated-admin role first:
-```bash
-aws sts assume-role --role-arn arn:aws:iam::ACCOUNT_ID:role/InspectorReadOnly \
-  --role-session-name monthly-report --profile org-master
-# then export the returned credentials and run agent.py
+### 2. Team-grouped report (multi-account)
+
+Create `teams.json` mapping each team to its AWS account IDs:
+```json
+{
+  "platform":  ["123456789012", "234567890123"],
+  "security":  ["345678901234"],
+  "data":      ["456789012345", "567890123456"],
+  "frontend":  ["678901234567"]
+}
 ```
 
-### 2. Compare to previous month (trends)
+Run with `--role-name` to assume a cross-account IAM role in each account:
+```bash
+python agent.py report \
+  --team-config teams.json \
+  --role-name   InspectorReadOnly \
+  --regions     us-east-1,us-west-2 \
+  --kev \
+  --split-by-team \
+  --output      report_march_2026.json
+```
+
+`--split-by-team` writes separate files per team alongside the combined report:
+`report_march_2026_platform.json`, `report_march_2026_security.json`, etc.
+
+If you are the Inspector **delegated admin** in an AWS Organization, all member-account findings flow through your credentials automatically — omit `--role-name` and the script groups findings from the pull using the account IDs in `teams.json`.
+
+### 3. Compare to previous month (trends)
 
 ```bash
 python agent.py trends \
@@ -82,7 +109,7 @@ python agent.py trends \
   --output   trends_march_2026.json
 ```
 
-### 3. Automate monthly via GitHub Actions
+### 4. Automate monthly via GitHub Actions
 
 ```yaml
 on:
@@ -144,6 +171,18 @@ Use Inspector console to export ECR-only findings to JSON, then pass as a findin
 ```bash
 python agent.py trends --current report_march.json --previous report_feb.json
 # severity_trend shows INCREASED/DECREASED/UNCHANGED per severity band
+```
+
+**Report grouped by team across four AWS accounts:**
+```bash
+python agent.py report \
+  --team-config teams.json \
+  --role-name   InspectorReadOnly \
+  --regions     us-east-1,us-west-2 \
+  --kev --split-by-team \
+  --output      report_march_2026.json
+# Writes combined report + one file per team; by_team section shows each team's
+# severity breakdown, KEV hits, and top CVEs separately
 ```
 
 **CI gate — block merge on CRITICAL:**
@@ -213,7 +252,23 @@ python agent.py trends --current report_march.json --previous report_feb.json
     ]
   },
   "kev_enriched": true,
-  "recommendation": "12 CRITICAL and 47 HIGH findings require immediate attention."
+  "recommendation": "12 CRITICAL and 47 HIGH findings require immediate attention.",
+  "by_team": {
+    "platform": {
+      "accounts": ["123456789012", "234567890123"],
+      "total_findings": 134,
+      "overall_risk": "CRITICAL",
+      "metrics": { "by_severity": { "CRITICAL": 9, "HIGH": 31, "MEDIUM": 62, "LOW": 32, "INFORMATIONAL": 0 }, "..." : "..." }
+    },
+    "security": {
+      "accounts": ["345678901234"],
+      "total_findings": 28,
+      "overall_risk": "HIGH",
+      "metrics": { "by_severity": { "CRITICAL": 0, "HIGH": 10, "MEDIUM": 14, "LOW": 4, "INFORMATIONAL": 0 }, "..." : "..." }
+    },
+    "data":     { "...": "..." },
+    "frontend": { "...": "..." }
+  }
 }
 ```
 

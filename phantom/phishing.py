@@ -46,7 +46,7 @@ from notifier import notify_all
 
 ROOT         = Path(__file__).parent.parent
 REPORTS_DIR  = ROOT / "reports" / "phishing"
-MODEL        = "claude-opus-4-6"
+MODEL        = "claude-opus-4-8"
 MAX_TOKENS   = 8096
 VT_KEY       = os.environ.get("VIRUSTOTAL_API_KEY", "")
 

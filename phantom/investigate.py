@@ -3,7 +3,7 @@
 phantom/investigate.py — Autonomous SOC Alert Investigator
 
 Accepts a Wazuh alert (JSON file, raw JSON string, or alert ID) and runs
-a fully autonomous multi-step investigation using Claude claude-opus-4-6 in SOC mode.
+a fully autonomous multi-step investigation using Claude claude-opus-4-8 in SOC mode.
 Queries live SOC platform data (OpenSearch, Wazuh, MISP, Cortex, TheHive), maps
 findings to MITRE ATT&CK, and writes a timestamped Markdown investigation report.
 
@@ -101,7 +101,7 @@ DEMO_ALERT = {
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
-MODEL      = "claude-opus-4-6"
+MODEL      = "claude-opus-4-8"
 MAX_TOKENS = 8096
 
 # ── Load .env ─────────────────────────────────────────────────────────────────

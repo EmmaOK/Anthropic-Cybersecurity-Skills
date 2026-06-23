@@ -64,7 +64,7 @@ from main import dispatch_tool
 
 SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
 DEFAULT_THRESHOLD = os.environ.get("FAIL_THRESHOLD", "HIGH")
-MODEL = "claude-opus-4-6"
+MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8096
 
 SCOPE_TO_AGENTS = {

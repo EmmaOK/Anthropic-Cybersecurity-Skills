@@ -58,7 +58,7 @@ SESSIONS_DIR = Path(__file__).parent / "sessions"
 # Configuration
 # ---------------------------------------------------------------------------
 
-MODEL = "claude-opus-4-6"
+MODEL = "claude-opus-4-8"
 MAX_TOKENS = 4096
 
 SUPPORTED_IMAGE_TYPES = {

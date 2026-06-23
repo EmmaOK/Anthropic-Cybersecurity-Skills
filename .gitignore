@@ -22,6 +22,8 @@ AUDIT_REPORT.md
 pentest-reports/
 fortark/
 terraform.tfvars
+reports/
+pivotree_ir_readiness_questionnaire.md
 
 # Phantom local venv (SDK spike runtime)
 phantom/.venv/

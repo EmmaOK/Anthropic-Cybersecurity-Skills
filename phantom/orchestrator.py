@@ -27,7 +27,7 @@ try:
 except ImportError:
     raise ImportError("pip install anthropic")
 
-MODEL = "claude-opus-4-6"
+MODEL = "claude-opus-4-8"
 MAX_TOKENS = 4096
 MAX_DEPTH = 3
 MAX_PARALLEL_AGENTS = 8
