@@ -64,6 +64,9 @@ resource "aws_iam_role" "ecs_task" {
 }
 
 # Allow ECS Exec (SSM) — required for aws ecs execute-command
+# LPP-03 formal exception: SSM Messages actions do not support resource-level restrictions;
+# AWS requires Resource = "*" for all ssmmessages:* actions used by ECS Exec.
+# Reference: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-exec.html
 resource "aws_iam_role_policy" "ecs_task_exec_command" {
   name = "phantom-mcp-task-exec-command"
   role = aws_iam_role.ecs_task.id

@@ -71,3 +71,9 @@ variable "anthropic_api_key_secret_arn" {
   type        = string
   default     = ""
 }
+
+variable "vpc_cidr_block" {
+  description = "VPC CIDR block — used to scope ECS task egress to VPC-internal traffic (AWS service VPC endpoints)"
+  type        = string
+  default     = "10.0.0.0/16"
+}

@@ -15,6 +15,7 @@ Auth:  Authorization: Bearer <PHANTOM_API_KEY>
 Admin: X-Admin-Token: <ADMIN_SHUTDOWN_TOKEN>
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -28,7 +29,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 
 from mcp.server.sse import SseServerTransport
@@ -36,6 +37,13 @@ from mcp.server.sse import SseServerTransport
 # MCP server object — all tool handlers are registered at module load time
 sys.path.insert(0, os.path.dirname(__file__))
 from phantom_mcp_server import server
+from phantom_task_runner import (
+    TaskStatus,
+    create_task,
+    get_task,
+    list_all_tasks,
+    run_task_agent,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("phantom-http")
@@ -155,8 +163,8 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if path in ("/health", "/healthz"):
             return await call_next(request)
 
-        # Bearer auth for SSE + MCP message paths
-        if path in ("/sse",) or path.startswith("/messages/"):
+        # Bearer auth for SSE, MCP message, and task paths
+        if path in ("/sse",) or path.startswith("/messages/") or path.startswith("/tasks"):
             if _API_KEY:
                 auth = request.headers.get("Authorization", "")
                 token = auth.removeprefix("Bearer ").strip()
@@ -177,6 +185,84 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             _scan_injection(body)
 
         return await call_next(request)
+
+
+# ── /tasks handlers ───────────────────────────────────────────────────────────
+
+async def tasks_list(request: Request):
+    return JSONResponse({"tasks": list_all_tasks()})
+
+
+async def tasks_create(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+
+    task_text = (body.get("task") or "").strip()
+    if not task_text:
+        return JSONResponse({"error": "'task' field is required"}, status_code=400)
+
+    scope = body.get("scope", [])
+    if isinstance(scope, str):
+        scope = [scope]
+
+    try:
+        task = create_task(task_text, list(scope))
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+
+    # Launch the agent loop as a background asyncio task
+    asyncio.create_task(run_task_agent(task))
+    log.info("[tasks] created job %s: %s", task.job_id[:8], task_text[:80])
+
+    return JSONResponse({
+        "job_id":     task.job_id,
+        "status":     task.status,
+        "task":       task.task,
+        "scope":      task.scope,
+        "poll_url":   f"/tasks/{task.job_id}",
+        "stream_url": f"/tasks/{task.job_id}/stream",
+    }, status_code=202)
+
+
+async def tasks_get(request: Request):
+    job_id = request.path_params["job_id"]
+    task = get_task(job_id)
+    if task is None:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    return JSONResponse(task.to_dict())
+
+
+async def tasks_stream(request: Request):
+    job_id = request.path_params["job_id"]
+    task = get_task(job_id)
+    if task is None:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+
+    async def event_stream():
+        cursor = 0
+        while True:
+            # Replay all events the agent has emitted so far
+            while cursor < len(task.events):
+                yield task.events[cursor].to_sse()
+                cursor += 1
+
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                yield 'data: {"type":"stream_end"}\n\n'
+                break
+
+            # Brief sleep to avoid busy-looping; 200 ms is imperceptible to humans
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":    "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx buffering
+        },
+    )
 
 
 # ── Application factory ───────────────────────────────────────────────────────
@@ -222,12 +308,17 @@ def create_app() -> Starlette:
     app = Starlette(
         lifespan=lifespan,
         routes=[
-            Route("/health",          endpoint=health),
-            Route("/healthz",         endpoint=health),
-            Route("/sse",             endpoint=handle_sse),
-            Mount("/messages/",       app=sse.handle_post_message),
-            Route("/admin/shutdown",  endpoint=admin_shutdown, methods=["POST"]),
-            Route("/admin/throttle",  endpoint=admin_throttle, methods=["POST"]),
+            Route("/health",                    endpoint=health),
+            Route("/healthz",                   endpoint=health),
+            Route("/sse",                       endpoint=handle_sse),
+            Mount("/messages/",                 app=sse.handle_post_message),
+            Route("/admin/shutdown",            endpoint=admin_shutdown,  methods=["POST"]),
+            Route("/admin/throttle",            endpoint=admin_throttle,  methods=["POST"]),
+            # Task endpoints — stream route must be listed before the {job_id} catch-all
+            Route("/tasks",                     endpoint=tasks_list,      methods=["GET"]),
+            Route("/tasks",                     endpoint=tasks_create,    methods=["POST"]),
+            Route("/tasks/{job_id}/stream",     endpoint=tasks_stream,    methods=["GET"]),
+            Route("/tasks/{job_id}",            endpoint=tasks_get,       methods=["GET"]),
         ],
     )
     app.add_middleware(ApiKeyMiddleware)

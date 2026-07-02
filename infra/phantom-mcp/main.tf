@@ -35,6 +35,24 @@ locals {
     ManagedBy   = "terraform"
     Owner       = "security-team"
   }
+
+  # Conditionally inject ANTHROPIC_API_KEY when the secret ARN is provided.
+  # Required by run_skill_agent for skills that call the Anthropic API.
+  anthropic_secret = var.anthropic_api_key_secret_arn != "" ? [{
+    name      = "ANTHROPIC_API_KEY"
+    valueFrom = var.anthropic_api_key_secret_arn
+  }] : []
+
+  container_secrets = concat([
+    {
+      name      = "PHANTOM_API_KEY"
+      valueFrom = aws_secretsmanager_secret.phantom_api_key.arn
+    },
+    {
+      name      = "ADMIN_SHUTDOWN_TOKEN"
+      valueFrom = aws_secretsmanager_secret.admin_shutdown_token.arn
+    }
+  ], local.anthropic_secret)
 }
 
 # ── ECR Repository ─────────────────────────────────────────────────────────────
@@ -145,8 +163,21 @@ resource "aws_security_group" "ecs" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  # LPP-02: Split egress to distinguish VPC-internal AWS service traffic from internet egress.
+  # Full LPP-02 remediation requires VPC Interface endpoints for ECR, Secrets Manager,
+  # and CloudWatch Logs — at which point the internet egress rule below can be removed.
   egress {
-    description = "Outbound for AWS APIs (ECR, Secrets Manager, CloudWatch)"
+    description = "HTTPS to VPC endpoints (ECR, Secrets Manager, CloudWatch Logs)"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr_block]
+  }
+
+  # LPP-02 exception: skills may call external APIs (Anthropic, AWS Inspector, etc.)
+  # Pending: replace with WAF/egress proxy + allowlist once VPC endpoints cover all AWS services
+  egress {
+    description = "HTTPS to internet — required for Anthropic API + skill external calls (LPP-02 exception)"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -302,16 +333,7 @@ resource "aws_ecs_task_definition" "phantom_mcp" {
       { name = "PORT", value = "8080" }
     ]
 
-    secrets = [
-      {
-        name      = "PHANTOM_API_KEY"
-        valueFrom = aws_secretsmanager_secret.phantom_api_key.arn
-      },
-      {
-        name      = "ADMIN_SHUTDOWN_TOKEN"
-        valueFrom = aws_secretsmanager_secret.admin_shutdown_token.arn
-      }
-    ]
+    secrets = local.container_secrets
 
     logConfiguration = {
       logDriver = "awslogs"

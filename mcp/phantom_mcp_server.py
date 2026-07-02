@@ -16,6 +16,7 @@ import json
 import subprocess
 import sys
 import re
+import time
 from pathlib import Path
 
 try:
@@ -171,6 +172,26 @@ def _build_rich_index() -> list[dict]:
     return skills
 
 
+# ── Structured audit logging (OBS-01) ─────────────────────────────────────────
+
+def _audit_log(name: str, args: dict, elapsed_ms: float, error: bool = False) -> None:
+    # Redact raw script args to avoid leaking paths/tokens in logs
+    safe_args: dict = {}
+    for k, v in args.items():
+        if k == "args":
+            safe_args["args_count"] = len(v) if isinstance(v, list) else 1
+        else:
+            safe_args[k] = v
+    print(json.dumps({
+        "event": "tool_call",
+        "tool": name,
+        "ts": time.time(),
+        "elapsed_ms": round(elapsed_ms, 1),
+        "args": safe_args,
+        "error": error,
+    }), flush=True)
+
+
 # ── Server ─────────────────────────────────────────────────────────────────────
 
 server = Server("phantom-skills")
@@ -300,19 +321,30 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
-    if name == "search_skills":
-        return [TextContent(type="text", text=_search_skills(arguments))]
-    if name == "load_skill":
-        return [TextContent(type="text", text=_load_skill(arguments))]
-    if name == "run_skill_agent":
-        return [TextContent(type="text", text=_run_skill_agent(arguments))]
-    if name == "list_subdomains":
-        return [TextContent(type="text", text=_list_subdomains())]
-    if name == "search_soc_skills":
-        return [TextContent(type="text", text=_search_soc_skills(arguments))]
-    if name == "get_platform_adapted_skill":
-        return [TextContent(type="text", text=_get_platform_adapted_skill(arguments))]
-    return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
+    t0 = time.monotonic()
+    error = False
+    try:
+        if name == "search_skills":
+            result = [TextContent(type="text", text=_search_skills(arguments))]
+        elif name == "load_skill":
+            result = [TextContent(type="text", text=_load_skill(arguments))]
+        elif name == "run_skill_agent":
+            result = [TextContent(type="text", text=_run_skill_agent(arguments))]
+        elif name == "list_subdomains":
+            result = [TextContent(type="text", text=_list_subdomains())]
+        elif name == "search_soc_skills":
+            result = [TextContent(type="text", text=_search_soc_skills(arguments))]
+        elif name == "get_platform_adapted_skill":
+            result = [TextContent(type="text", text=_get_platform_adapted_skill(arguments))]
+        else:
+            error = True
+            result = [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
+    except Exception:
+        error = True
+        raise
+    finally:
+        _audit_log(name, arguments, (time.monotonic() - t0) * 1000, error=error)
+    return result
 
 
 # ── Implementations ────────────────────────────────────────────────────────────
