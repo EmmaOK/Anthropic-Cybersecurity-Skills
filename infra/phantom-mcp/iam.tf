@@ -39,7 +39,7 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         Resource = [
           aws_secretsmanager_secret.phantom_api_key.arn,
           aws_secretsmanager_secret.admin_shutdown_token.arn,
-          var.anthropic_api_key_secret_arn != "" ? var.anthropic_api_key_secret_arn : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+          aws_secretsmanager_secret.kali_ssh_key.arn,
         ]
       }
     ]
@@ -82,6 +82,29 @@ resource "aws_iam_role_policy" "ecs_task_exec_command" {
         "ssmmessages:OpenDataChannel"
       ]
       Resource = "*"
+    }]
+  })
+}
+
+# Allow the task agent to invoke Claude via Bedrock (cross-region inference profiles + foundation models)
+resource "aws_iam_role_policy" "ecs_task_bedrock" {
+  name = "phantom-mcp-task-bedrock"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+      ]
+      Resource = [
+        # Foundation models (no account ID in ARN)
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-*",
+        # Cross-region inference profiles (scoped to this account + Claude only)
+        "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-*",
+      ]
     }]
   })
 }

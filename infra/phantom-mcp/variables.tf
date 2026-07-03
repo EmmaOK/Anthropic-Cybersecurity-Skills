@@ -66,14 +66,26 @@ variable "desired_count" {
   default     = 2
 }
 
-variable "anthropic_api_key_secret_arn" {
-  description = "ARN of the Secrets Manager secret holding the ANTHROPIC_API_KEY (used by run_skill_agent)"
+variable "bedrock_model_id" {
+  description = "Bedrock cross-region inference profile ID for the task agent. Verify with: aws bedrock list-inference-profiles --region us-east-1"
   type        = string
-  default     = ""
+  default     = "us.anthropic.claude-opus-4-8"
 }
 
 variable "vpc_cidr_block" {
   description = "VPC CIDR block — used to scope ECS task egress to VPC-internal traffic (AWS service VPC endpoints)"
   type        = string
   default     = "10.0.0.0/16"
+}
+
+variable "kali_instance_type" {
+  description = "EC2 instance type for the Kali pentest backend (min t3.medium for tool databases)"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "kali_user" {
+  description = "SSH username on the pentest backend instance (ubuntu for Ubuntu AMI)"
+  type        = string
+  default     = "ubuntu"
 }

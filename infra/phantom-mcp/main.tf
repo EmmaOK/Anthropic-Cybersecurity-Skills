@@ -36,14 +36,7 @@ locals {
     Owner       = "security-team"
   }
 
-  # Conditionally inject ANTHROPIC_API_KEY when the secret ARN is provided.
-  # Required by run_skill_agent for skills that call the Anthropic API.
-  anthropic_secret = var.anthropic_api_key_secret_arn != "" ? [{
-    name      = "ANTHROPIC_API_KEY"
-    valueFrom = var.anthropic_api_key_secret_arn
-  }] : []
-
-  container_secrets = concat([
+  container_secrets = [
     {
       name      = "PHANTOM_API_KEY"
       valueFrom = aws_secretsmanager_secret.phantom_api_key.arn
@@ -51,8 +44,12 @@ locals {
     {
       name      = "ADMIN_SHUTDOWN_TOKEN"
       valueFrom = aws_secretsmanager_secret.admin_shutdown_token.arn
-    }
-  ], local.anthropic_secret)
+    },
+    {
+      name      = "KALI_SSH_KEY"
+      valueFrom = aws_secretsmanager_secret.kali_ssh_key.arn
+    },
+  ]
 }
 
 # ── ECR Repository ─────────────────────────────────────────────────────────────
@@ -174,10 +171,10 @@ resource "aws_security_group" "ecs" {
     cidr_blocks = [var.vpc_cidr_block]
   }
 
-  # LPP-02 exception: skills may call external APIs (Anthropic, AWS Inspector, etc.)
+  # LPP-02 exception: skills may call external APIs (AWS Inspector, etc.)
   # Pending: replace with WAF/egress proxy + allowlist once VPC endpoints cover all AWS services
   egress {
-    description = "HTTPS to internet — required for Anthropic API + skill external calls (LPP-02 exception)"
+    description = "HTTPS to internet - skill external calls (LPP-02 exception, pending VPC endpoints)"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -330,7 +327,11 @@ resource "aws_ecs_task_definition" "phantom_mcp" {
     }]
 
     environment = [
-      { name = "PORT", value = "8080" }
+      { name = "PORT",             value = "8080" },
+      { name = "BEDROCK_REGION",   value = var.aws_region },
+      { name = "BEDROCK_MODEL_ID", value = var.bedrock_model_id },
+      { name = "KALI_HOST",        value = aws_instance.kali.private_ip },
+      { name = "KALI_USER",        value = var.kali_user },
     ]
 
     secrets = local.container_secrets
@@ -418,7 +419,7 @@ resource "aws_appautoscaling_target" "phantom_mcp" {
 
 resource "aws_route53_record" "phantom_mcp" {
   zone_id = "Z09638163IEREBBF4EHG9"
-  name    = "phantom-mcp.tstsecurity.[org].engineering"
+  name    = "phantom-mcp.tstsecurity.pivotree.engineering"
   type    = "A"
 
   alias {

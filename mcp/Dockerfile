@@ -11,6 +11,7 @@ COPY index.json           ./index.json
 COPY skills/              ./skills/
 COPY mcp/phantom_mcp_server.py   ./mcp/phantom_mcp_server.py
 COPY mcp/phantom_http_server.py  ./mcp/phantom_http_server.py
+COPY mcp/phantom_task_runner.py  ./mcp/phantom_task_runner.py
 COPY security/kill-switch-phantom-mcp/ ./security/kill-switch-phantom-mcp/
 
 # Non-root user for security

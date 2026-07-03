@@ -34,6 +34,22 @@ output "mcp_sse_url" {
   sensitive   = false
 }
 
+output "kali_private_ip" {
+  description = "Private IP of the Kali pentest backend — SSH target for Phantom ECS tasks"
+  value       = aws_instance.kali.private_ip
+}
+
+output "kali_instance_id" {
+  description = "Kali EC2 instance ID — use to start/stop the instance via AWS console or CLI"
+  value       = aws_instance.kali.id
+}
+
+output "kali_ssh_command" {
+  description = "SSH command to connect to Kali manually (run from a host with VPC access)"
+  value       = "ssh -i <(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.kali_ssh_key.name} --query SecretString --output text) ${var.kali_user}@${aws_instance.kali.private_ip}"
+  sensitive   = false
+}
+
 output "developer_mcp_config" {
   description = "Drop this into .mcp.json for developer Claude Code setup"
   value       = <<-EOT

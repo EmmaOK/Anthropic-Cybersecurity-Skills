@@ -46,29 +46,49 @@ try:
 except ImportError:
     _SDK_OK = False
 
-MODEL = "claude-opus-4-8"
-MAX_TURNS = 20
+try:
+    import asyncssh
+    _SSH_OK = True
+except ImportError:
+    _SSH_OK = False
+
+# Bedrock cross-region inference profile — override via BEDROCK_MODEL_ID env var.
+# Verify the exact ID against: aws bedrock list-inference-profiles --region us-east-1
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-opus-4-8")
+BEDROCK_REGION   = os.environ.get("BEDROCK_REGION", "us-east-1")
+MAX_TURNS        = 20
+
+# Kali pentest backend — SSH connection parameters injected by ECS task definition
+KALI_HOST    = os.environ.get("KALI_HOST", "")
+KALI_USER    = os.environ.get("KALI_USER", "kali")
+KALI_SSH_KEY = os.environ.get("KALI_SSH_KEY", "")  # PEM string from Secrets Manager
 
 _SYSTEM_PROMPT = """\
-You are Phantom, an autonomous cybersecurity AI agent with access to an 841-skill library.
-Complete the given security task end-to-end using the tools below.
+You are Phantom, an autonomous cybersecurity AI agent with access to an 841-skill library
+and a Kali Linux execution backend for system-level tools.
 
 Tools:
   search_skills     — find skills by keyword, subdomain, or tag
   list_subdomains   — see every skill domain and its count
   load_skill        — read the full SKILL.md workflow for a skill
-  run_skill_agent   — execute a skill's agent.py script
+  run_skill_agent   — execute a skill's agent.py script (API-based skills only)
+  kali_exec         — run any command on the Kali Linux backend (nmap, nikto, sqlmap, nuclei, etc.)
 
-CONSTRAINT: run_skill_agent only works for API-based skills (boto3, requests, urllib).
-Do NOT call it for skills that require nmap, kali, masscan, or system tools — those
-binaries are not installed in this environment and the call will fail.
-Before calling run_skill_agent, always load_skill first and confirm the skill uses only
-Python API calls (no subprocess / system tool invocations).
+Tool selection:
+  - For skills that use boto3 / requests / Python APIs: use run_skill_agent
+  - For skills that require nmap, nikto, masscan, gobuster, sqlmap, hydra, nuclei,
+    metasploit, or any system binary: use kali_exec directly
+  - Always load_skill first to check the skill's prerequisites before calling run_skill_agent
+  - kali_exec is available only when KALI_HOST is configured — check availability by
+    running: kali_exec("echo kali-ready")
+
+Kali tools available: nmap, nikto, masscan, gobuster, sqlmap, hydra, john, hashcat,
+  nuclei, wfuzz, whatweb, sslscan, testssl.sh, curl, wget, python3
 
 Workflow:
   1. search_skills (and list_subdomains if unsure of domain) to find candidates
-  2. load_skill to read prerequisites and verify the skill is API-based
-  3. run_skill_agent only when prerequisites are confirmed met
+  2. load_skill to read prerequisites
+  3. run_skill_agent for API-based skills, kali_exec for system-tool skills
   4. Synthesise all findings into a clear, structured final report
 
 Authorized scope: {scope}
@@ -126,6 +146,26 @@ _TOOLS: list[dict] = [
                                "description": "CLI args for the script"},
             },
             "required": ["skill_name", "args"],
+        },
+    },
+    {
+        "name": "kali_exec",
+        "description": (
+            "Run a shell command on the Kali Linux pentest backend over SSH. "
+            "Use for any skill requiring system tools: nmap, nikto, masscan, gobuster, "
+            "sqlmap, hydra, nuclei, wfuzz, whatweb, sslscan, testssl.sh, metasploit, etc. "
+            "Returns stdout, stderr, and exit_code. "
+            "Test availability first: kali_exec('echo kali-ready'). "
+            "Returns an error dict if the Kali backend is unreachable."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command":   {"type": "string", "description": "Shell command to execute on Kali"},
+                "timeout_s": {"type": "integer", "default": 120,
+                              "description": "Max seconds to wait for command completion (default 120, max 600)"},
+            },
+            "required": ["command"],
         },
     },
 ]
@@ -201,9 +241,7 @@ _MAX_TASKS: int                    = 100
 
 def create_task(task: str, scope: list) -> PhantomTask:
     if not _SDK_OK:
-        raise RuntimeError("anthropic SDK not installed — cannot run tasks")
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise RuntimeError("ANTHROPIC_API_KEY is not set in the container environment")
+        raise RuntimeError("anthropic[bedrock] SDK not installed — cannot run tasks")
 
     job_id = str(uuid.uuid4())
     pt = PhantomTask(job_id=job_id, task=task, scope=scope)
@@ -226,6 +264,43 @@ def list_all_tasks() -> list[dict]:
     return [t.to_dict() for t in _TASKS.values()]
 
 
+# ── Kali SSH execution ─────────────────────────────────────────────────────────
+
+async def _kali_exec(args: dict) -> str:
+    if not _SSH_OK:
+        return json.dumps({"error": "asyncssh not installed — rebuild Docker image"})
+    if not KALI_HOST:
+        return json.dumps({"error": "KALI_HOST not set — Kali backend not configured"})
+    if not KALI_SSH_KEY:
+        return json.dumps({"error": "KALI_SSH_KEY not set — SSH key not injected"})
+
+    command   = args.get("command", "")
+    timeout_s = min(int(args.get("timeout_s", 120)), 600)
+
+    try:
+        key = asyncssh.import_private_key(KALI_SSH_KEY)
+        async with asyncssh.connect(
+            KALI_HOST,
+            username=KALI_USER,
+            client_keys=[key],
+            known_hosts=None,   # lab VPC — host key pinning not required
+            connect_timeout=15,
+        ) as conn:
+            result = await asyncio.wait_for(
+                conn.run(command, check=False),
+                timeout=timeout_s,
+            )
+            return json.dumps({
+                "stdout":    result.stdout,
+                "stderr":    result.stderr,
+                "exit_code": result.exit_status,
+            })
+    except asyncio.TimeoutError:
+        return json.dumps({"error": f"command timed out after {timeout_s}s"})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
 # ── Tool dispatch (runs sync skill functions in a thread pool) ─────────────────
 
 async def _dispatch(name: str, args: dict) -> str:
@@ -237,13 +312,17 @@ async def _dispatch(name: str, args: dict) -> str:
         return await asyncio.to_thread(_load_skill, args)
     if name == "run_skill_agent":
         return await asyncio.to_thread(_run_skill_agent, args)
+    if name == "kali_exec":
+        return await _kali_exec(args)
     return json.dumps({"error": f"unknown tool: {name}"})
 
 
 def _redact_args(tool_name: str, args: dict) -> dict:
-    """Avoid logging raw script args that may contain paths or tokens."""
     if tool_name == "run_skill_agent" and "args" in args:
         return {**args, "args": f"[{len(args['args'])} args]"}
+    if tool_name == "kali_exec":
+        cmd = args.get("command", "")
+        return {**args, "command": cmd[:120] + ("..." if len(cmd) > 120 else "")}
     return args
 
 
@@ -262,7 +341,7 @@ async def run_task_agent(task: PhantomTask) -> None:
 
     system   = _SYSTEM_PROMPT.format(scope=scope_str)
     messages = [{"role": "user", "content": task.task}]
-    client   = anthropic.AsyncAnthropic()
+    client   = anthropic.AsyncAnthropicBedrock(aws_region=BEDROCK_REGION)
 
     try:
         while task.turns < MAX_TURNS:
@@ -270,7 +349,7 @@ async def run_task_agent(task: PhantomTask) -> None:
             task.emit("turn", n=task.turns, max=MAX_TURNS)
 
             resp = await client.messages.create(
-                model=MODEL,
+                model=BEDROCK_MODEL_ID,
                 max_tokens=4096,
                 system=system,
                 tools=_TOOLS,
