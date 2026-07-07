@@ -18,12 +18,72 @@ launch/
 extract_attack.py
 AUDIT_REPORT.md
 
-# Pentest reports and client data — never commit
+# ─── Security-engagement working artifacts — never commit ───
+# These are per-engagement outputs and client data, not part of the library.
+
+# Pentest reports & client data
 pentest-reports/
-fortark/
-terraform.tfvars
+pentest_reports/
 reports/
+fortark/
 pivotree_ir_readiness_questionnaire.md
+nikto_scans/
+jwt_test/
+host_header_test/
+ssl_tls_assessment/
+/dns_enum_*.json
+/phase1_osint.json
+/phase2_*.json
+/phase[0-9]*_report.md
+/phase4_final_report.md
+/phantom-phishing-6-stages.html
+# Client-specific recon output (domain-named dirs)
+/pivotree.engineering/
+/pivotree-backstage.pivotree.engineering/
+# Ad-hoc HTML reports / decks
+/securonix_*.html
+/mdm_oc_lab_vulnerability_report.html
+/ir_investigation_report_*.html
+/c3_iam_investigation_*.html
+/PATCH-RUNBOOK-*.html
+/vulnerability_training_slides.html
+
+# AWS Inspector pulls, deltas, and remediation backlogs
+inspector_checkpoints/
+/inspector_report_*.json
+/inspector_report_fresh.json
+/inspector_delta_*.json
+/inspector_delta_*.html
+/inspector_jun*.html
+/inspector_scoped_comparison*.html
+/raw_findings_*.json
+/remediation_backlog_*.json
+/closed_findings_*.json
+/kev_delta_report.json
+/kev_findings_*.json
+/missing_accounts_sweep_*.json
+/delegation_*.json
+/delegation_*.html
+/all_findings.json
+/backlog_real.json
+/sr_payloads_*.json
+/cors_report.json
+# Account→team routing map (client data; commit the .example template instead)
+config/account_team_map.yaml
+
+# Ad-hoc Inspector/analysis scripts
+/pull_inspector*.py
+/inspector_delta_report.py
+/inspector_scoped_comparison.py
+/compute_final_delta.py
+tmp/
+
+# Terraform state, plans, and provider caches
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+/infra/**/tfplan
 
 # Phantom local venv (SDK spike runtime)
 phantom/.venv/
