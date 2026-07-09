@@ -99,3 +99,9 @@ variable "enable_deletion_protection" {
   description = "ALB deletion protection. Disable to allow scheme changes / teardown during testing."
   default     = true
 }
+
+variable "defectdojo_url" {
+  type        = string
+  description = "DefectDojo base URL (e.g. https://defectdojo.example.com). Empty disables the DEFECTDOJO_URL env var."
+  default     = ""
+}

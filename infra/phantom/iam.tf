@@ -55,6 +55,7 @@ data "aws_iam_policy_document" "ecs_execution" {
       aws_secretsmanager_secret.anthropic_api_key.arn,
       aws_secretsmanager_secret.phantom_admin_token.arn,
       aws_secretsmanager_secret.google_chat_webhook.arn,
+      aws_secretsmanager_secret.defectdojo_api_key.arn,
     ]
   }
 }

@@ -54,6 +54,10 @@ locals {
         name      = "GOOGLE_CHAT_WEBHOOK"
         valueFrom = aws_secretsmanager_secret.google_chat_webhook.arn
       },
+      {
+        name      = "DEFECTDOJO_API_KEY"
+        valueFrom = aws_secretsmanager_secret.defectdojo_api_key.arn
+      },
     ]
   )
 
@@ -62,7 +66,8 @@ locals {
       { name = "PORT", value = "8080" },
       { name = "AWS_REGION", value = var.aws_region },
     ],
-    var.use_bedrock ? [{ name = "PHANTOM_USE_BEDROCK", value = "1" }] : []
+    var.use_bedrock ? [{ name = "PHANTOM_USE_BEDROCK", value = "1" }] : [],
+    var.defectdojo_url != "" ? [{ name = "DEFECTDOJO_URL", value = var.defectdojo_url }] : []
   )
 }
 
@@ -132,6 +137,17 @@ resource "aws_secretsmanager_secret" "phantom_admin_token" {
 resource "aws_secretsmanager_secret" "google_chat_webhook" {
   name        = "${local.name_prefix}/${var.environment}/google-chat-webhook"
   description = "Google Chat webhook for Phantom notifications"
+
+  tags = local.common_tags
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
+}
+
+resource "aws_secretsmanager_secret" "defectdojo_api_key" {
+  name        = "${local.name_prefix}/${var.environment}/defectdojo-api-key"
+  description = "DefectDojo API v2 key for the Phantom service account (read-only)"
 
   tags = local.common_tags
 
