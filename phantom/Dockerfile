@@ -18,7 +18,11 @@ COPY skills/ ../skills/
 COPY index.json ../index.json
 
 # Create non-root user
-RUN useradd -u 1001 -m -s /sbin/nologin phantom && chown -R phantom:phantom /app
+# store.py's ROOT resolves to one level above /app (matching the repo-root layout
+# store.py expects) — create /reports there so blob saves (report writes, audit log)
+# don't fail with Permission Denied under the non-root user.
+RUN useradd -u 1001 -m -s /sbin/nologin phantom && chown -R phantom:phantom /app \
+    && mkdir -p /reports && chown -R phantom:phantom /reports
 USER phantom
 
 # Health check
