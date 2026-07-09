@@ -16,9 +16,17 @@ Public API:
     result = investigate_phishing(raw_email, reported_by="user@corp.com", report_id="abc123")
     # result: {report_id, verdict, confidence, recommended_action, iocs, report_markdown, ...}
 
-Environment variables (all optional):
-    VIRUSTOTAL_API_KEY   — enables URL/IP reputation checks via VirusTotal v3
+Environment variables (all optional except ANTHROPIC_API_KEY):
     ANTHROPIC_API_KEY    — required for Claude investigation
+    VIRUSTOTAL_API_KEY   — URL/IP/hash reputation via VirusTotal v3
+    Threat-intel fan-out (each source is skipped if its key is unset):
+      SHODAN_API_KEY     — attacker-infra profiling (open ports, CVEs, DNS) on IPs/domains
+      ABUSEIPDB_API_KEY  — IP abuse-confidence score
+      GREYNOISE_API_KEY  — IP scanner/mass-exploit classification (community API)
+      URLSCAN_API_KEY    — urlscan.io lookups (optional; raises rate limits)
+      THREATFOX_API_KEY  — abuse.ch ThreatFox IOC matches (a.k.a. ABUSECH_API_KEY)
+      MISP_URL + MISP_API_KEY — correlate IOCs against your own MISP instance
+      SKIP_TLS_VERIFY=1  — only for a self-signed MISP in a lab (repo convention)
 """
 
 import email
@@ -29,6 +37,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -49,6 +58,16 @@ REPORTS_DIR  = ROOT / "reports" / "phishing"
 MODEL        = "claude-opus-4-8"
 MAX_TOKENS   = 8096
 VT_KEY       = os.environ.get("VIRUSTOTAL_API_KEY", "")
+
+# Threat-intel fan-out source keys (each optional; unset sources are skipped)
+SHODAN_KEY    = os.environ.get("SHODAN_API_KEY", "")
+ABUSEIPDB_KEY = os.environ.get("ABUSEIPDB_API_KEY", "")
+GREYNOISE_KEY = os.environ.get("GREYNOISE_API_KEY", "")
+URLSCAN_KEY   = os.environ.get("URLSCAN_API_KEY", "")
+THREATFOX_KEY = os.environ.get("THREATFOX_API_KEY", os.environ.get("ABUSECH_API_KEY", ""))
+MISP_URL      = os.environ.get("MISP_URL", "").rstrip("/")
+MISP_KEY      = os.environ.get("MISP_API_KEY", os.environ.get("MISP_KEY", ""))
+VERIFY_TLS    = os.environ.get("SKIP_TLS_VERIFY", "").lower() not in ("1", "true", "yes")
 
 # In-memory store for completed investigations (report_id → result)
 _RESULTS: dict[str, dict] = {}
@@ -320,6 +339,174 @@ def _vt_ip_report(ip: str) -> dict:
     }
 
 
+# ── Threat-intel fan-out sources (each optional, keyed by env var) ──────────────
+
+def _http_json(url: str, headers: dict | None = None, method: str = "GET",
+               data: dict | None = None, timeout: int = 12, verify: bool = True) -> dict:
+    """Minimal JSON HTTP helper. Returns {'_http_error': code} or {'_error': msg} on failure."""
+    hdrs = {"Accept": "application/json"}
+    if headers:
+        hdrs.update(headers)
+    body = None
+    if data is not None:
+        body = json.dumps(data).encode()
+        hdrs.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=body, headers=hdrs, method=method)
+    ctx = None
+    if url.startswith("https") and not verify:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            raw = resp.read()
+        return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        return {"_http_error": e.code}
+    except Exception as e:
+        return {"_error": str(e)}
+
+
+def _shodan_host(ip: str) -> dict:
+    if not SHODAN_KEY:
+        return {"available": False, "reason": "SHODAN_API_KEY not set"}
+    r = _http_json(f"https://api.shodan.io/shodan/host/{urllib.parse.quote(ip)}?key={SHODAN_KEY}")
+    if r.get("_http_error") == 404:
+        return {"available": True, "not_found": True}
+    if "_http_error" in r or "_error" in r:
+        return {"available": True, "error": r}
+    return {
+        "available": True,
+        "ports":     r.get("ports", [])[:20],
+        "org":       r.get("org", ""),
+        "isp":       r.get("isp", ""),
+        "hostnames": r.get("hostnames", [])[:5],
+        "os":        r.get("os"),
+        "vulns":     list(r.get("vulns", []))[:10],
+        "country":   r.get("country_name", ""),
+        "tags":      r.get("tags", []),
+    }
+
+
+def _shodan_domain(domain: str) -> dict:
+    """Passive-DNS-style view of a domain via Shodan's DNS database."""
+    if not SHODAN_KEY:
+        return {"available": False, "reason": "SHODAN_API_KEY not set"}
+    r = _http_json(f"https://api.shodan.io/dns/domain/{urllib.parse.quote(domain)}?key={SHODAN_KEY}")
+    if "_http_error" in r or "_error" in r:
+        return {"available": True, "error": r}
+    recs = r.get("data", [])
+    return {
+        "available":   True,
+        "subdomains":  r.get("subdomains", [])[:15],
+        "record_count": len(recs),
+        "recent":      [{"type": d.get("type"), "value": d.get("value"),
+                         "last_seen": d.get("last_seen")} for d in recs[:8]],
+    }
+
+
+def _abuseipdb(ip: str) -> dict:
+    if not ABUSEIPDB_KEY:
+        return {"available": False, "reason": "ABUSEIPDB_API_KEY not set"}
+    r = _http_json(
+        f"https://api.abuseipdb.com/api/v2/check?ipAddress={urllib.parse.quote(ip)}&maxAgeInDays=90",
+        headers={"Key": ABUSEIPDB_KEY})
+    d = r.get("data", {})
+    if not d:
+        return {"available": True, "error": r}
+    return {
+        "available":        True,
+        "abuse_confidence": d.get("abuseConfidenceScore"),
+        "total_reports":    d.get("totalReports"),
+        "country":          d.get("countryCode"),
+        "isp":              d.get("isp"),
+        "usage_type":       d.get("usageType"),
+        "is_tor":           d.get("isTor"),
+    }
+
+
+def _greynoise(ip: str) -> dict:
+    if not GREYNOISE_KEY:
+        return {"available": False, "reason": "GREYNOISE_API_KEY not set"}
+    r = _http_json(f"https://api.greynoise.io/v3/community/{urllib.parse.quote(ip)}",
+                   headers={"key": GREYNOISE_KEY})
+    if r.get("_http_error") == 404:
+        return {"available": True, "seen": False}
+    if "_http_error" in r or "_error" in r:
+        return {"available": True, "error": r}
+    return {
+        "available":      True,
+        "noise":          r.get("noise"),
+        "riot":           r.get("riot"),
+        "classification": r.get("classification"),
+        "name":           r.get("name"),
+        "last_seen":      r.get("last_seen"),
+    }
+
+
+def _urlscan(domain: str) -> dict:
+    if not domain:
+        return {"available": False, "reason": "no domain"}
+    hdrs = {"API-Key": URLSCAN_KEY} if URLSCAN_KEY else {}
+    q = urllib.parse.quote(f'page.domain:"{domain}"')
+    search = _http_json(f"https://urlscan.io/api/v1/search/?q={q}&size=5", headers=hdrs)
+    if "_http_error" in search or "_error" in search:
+        return {"available": True, "error": search}
+    results = search.get("results", [])
+    out = {"available": True, "scans_found": len(results)}
+    if results:
+        newest = results[0]
+        out["latest_scan"] = newest.get("result", "")
+        out["latest_url"] = newest.get("page", {}).get("url", "")
+        uid = newest.get("_id", "")
+        if uid:
+            detail = _http_json(f"https://urlscan.io/api/v1/result/{uid}/", headers=hdrs)
+            v = detail.get("verdicts", {}).get("overall", {})
+            out["malicious"] = bool(v.get("malicious"))
+            out["score"] = v.get("score")
+            out["categories"] = v.get("categories", [])
+    return out
+
+
+def _threatfox(ioc: str) -> dict:
+    hdrs = {"Auth-Key": THREATFOX_KEY} if THREATFOX_KEY else {}
+    r = _http_json("https://threatfox-api.abuse.ch/api/v1/", headers=hdrs, method="POST",
+                   data={"query": "search_ioc", "search_term": ioc})
+    status = r.get("query_status")
+    if status == "ok":
+        data = r.get("data", [])
+        return {
+            "available":    True,
+            "matches":      len(data),
+            "malware":      [m for m in {d.get("malware_printable", "") for d in data} if m][:5],
+            "threat_types": [t for t in {d.get("threat_type", "") for d in data} if t][:5],
+        }
+    if status == "no_result":
+        return {"available": True, "matches": 0}
+    # missing Auth-Key or other error
+    return {"available": bool(THREATFOX_KEY), "error": status or r}
+
+
+def _misp(ioc: str) -> dict:
+    if not (MISP_URL and MISP_KEY):
+        return {"available": False, "reason": "MISP_URL / MISP_API_KEY not set"}
+    r = _http_json(f"{MISP_URL}/attributes/restSearch",
+                   headers={"Authorization": MISP_KEY},
+                   method="POST",
+                   data={"value": ioc, "limit": 10, "returnFormat": "json"},
+                   verify=VERIFY_TLS)
+    resp = r.get("response")
+    attrs = resp.get("Attribute", []) if isinstance(resp, dict) else (resp or [])
+    if "_error" in r or "_http_error" in r:
+        return {"available": True, "error": r}
+    return {
+        "available": True,
+        "matches":   len(attrs),
+        "events":    [e for e in {a.get("event_id", "") for a in attrs} if e][:5],
+        "to_ids":    any(a.get("to_ids") for a in attrs),
+    }
+
+
 # ── Tool implementations ───────────────────────────────────────────────────────
 
 def _tool_check_urls(urls: list[str]) -> dict:
@@ -474,6 +661,66 @@ def _tool_analyze_attachment(sha256: str, filename: str) -> dict:
     return result
 
 
+def _tool_threat_intel(indicator: str, indicator_type: str) -> dict:
+    """Fan an indicator out across every configured external threat-intel source
+    and roll the results up into a short list of malicious signals."""
+    indicator = (indicator or "").strip()
+    t = (indicator_type or "").lower().strip()
+    if not indicator:
+        return {"error": "no indicator provided"}
+
+    sources: dict[str, dict] = {}
+    if t == "ip":
+        sources["shodan"]    = _shodan_host(indicator)
+        sources["abuseipdb"] = _abuseipdb(indicator)
+        sources["greynoise"] = _greynoise(indicator)
+        sources["threatfox"] = _threatfox(indicator)
+        sources["misp"]      = _misp(indicator)
+    elif t == "domain":
+        sources["shodan_dns"] = _shodan_domain(indicator)
+        sources["urlscan"]    = _urlscan(indicator)
+        sources["threatfox"]  = _threatfox(indicator)
+        sources["misp"]       = _misp(indicator)
+    elif t == "url":
+        domain = urllib.parse.urlparse(indicator).netloc.split(":")[0] or indicator
+        sources["urlscan"]   = _urlscan(domain)
+        sources["threatfox"] = _threatfox(indicator)
+        sources["misp"]      = _misp(indicator)
+    elif t == "hash":
+        sources["threatfox"] = _threatfox(indicator)
+        sources["misp"]      = _misp(indicator)
+    else:
+        return {"error": f"unknown indicator_type '{indicator_type}' (use ip/domain/url/hash)"}
+
+    # Roll up the signals that actually indicate maliciousness.
+    signals: list[str] = []
+    ab = sources.get("abuseipdb", {})
+    if isinstance(ab.get("abuse_confidence"), (int, float)) and ab["abuse_confidence"] >= 50:
+        signals.append(f"AbuseIPDB abuse-confidence {ab['abuse_confidence']}%")
+    if sources.get("greynoise", {}).get("classification") == "malicious":
+        signals.append("GreyNoise classification: malicious")
+    if sources.get("urlscan", {}).get("malicious"):
+        signals.append("urlscan.io overall verdict: malicious")
+    tf = sources.get("threatfox", {})
+    if tf.get("matches"):
+        mal = ", ".join(tf.get("malware", [])) or "known IOC"
+        signals.append(f"ThreatFox: {tf['matches']} match(es) ({mal})")
+    mi = sources.get("misp", {})
+    if mi.get("matches"):
+        signals.append(f"MISP: {mi['matches']} attribute match(es) across events {mi.get('events', [])}")
+    if sources.get("shodan", {}).get("vulns"):
+        signals.append(f"Shodan: host exposes CVEs {sources['shodan']['vulns'][:3]}")
+
+    return {
+        "indicator":            indicator,
+        "type":                 t,
+        "malicious_signals":    signals,
+        "sources_queried":      [k for k, v in sources.items() if v.get("available")],
+        "sources_unconfigured": [k for k, v in sources.items() if not v.get("available")],
+        "detail":               sources,
+    }
+
+
 # ── Claude tool schemas ────────────────────────────────────────────────────────
 
 PHISHING_TOOLS = [
@@ -546,6 +793,26 @@ PHISHING_TOOLS = [
                 "filename": {"type": "string", "description": "Attachment filename"},
             },
             "required": ["sha256", "filename"],
+        },
+    },
+    {
+        "name": "check_threat_intel",
+        "description": (
+            "Fan an indicator out across external threat-intel sources — Shodan (attacker-infra "
+            "ports/CVEs/DNS), AbuseIPDB (IP abuse score), GreyNoise (scanner/mass-exploit "
+            "classification), urlscan.io (URL/domain scans + verdict), ThreatFox (known malware/C2 "
+            "IOC matches), and your MISP instance (org sightings) — and return correlated reputation "
+            "plus a rolled-up list of malicious signals. Call it for the sending IP, the sender domain, "
+            "each URL's domain, and any attachment hash. Sources without an API key are skipped and "
+            "listed under 'sources_unconfigured' — don't treat a skipped source as clean."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "indicator":      {"type": "string", "description": "the IP, domain, URL, or file hash to look up"},
+                "indicator_type": {"type": "string", "enum": ["ip", "domain", "url", "hash"]},
+            },
+            "required": ["indicator", "indicator_type"],
         },
     },
     {
@@ -644,6 +911,12 @@ def _dispatch(tool_name: str, tool_input: dict, parsed_email: dict) -> tuple[str
             tool_input.get("filename", ""),
         )), None
 
+    elif tool_name == "check_threat_intel":
+        return json.dumps(_tool_threat_intel(
+            tool_input.get("indicator", ""),
+            tool_input.get("indicator_type", ""),
+        )), None
+
     elif tool_name == "search_skills":
         results = _search_skills(tool_input.get("query", ""))
         return json.dumps({"results": [{"name": r["name"], "description": r.get("description", "")} for r in results]}), None
@@ -682,8 +955,13 @@ Follow this investigation sequence:
 5. check_domain — check sender domain and any domains in URLs
 6. check_urls — check URL reputation (check ALL URLs in the email)
 7. analyze_attachment — for each attachment, check hash and extension risk
-8. Reach a verdict: PHISHING / SUSPICIOUS / LEGITIMATE / UNKNOWN
-9. write_report — this MUST be your final action
+8. check_threat_intel — correlate the campaign's indicators against external threat intel:
+   the sending IP (type=ip), the sender domain (type=domain), each URL's domain (type=url),
+   and every attachment hash (type=hash). This adds Shodan/AbuseIPDB/GreyNoise/urlscan/
+   ThreatFox/MISP context beyond VirusTotal. Treat any entry in 'malicious_signals' as
+   strong evidence; a source listed in 'sources_unconfigured' was skipped, not cleared.
+9. Reach a verdict: PHISHING / SUSPICIOUS / LEGITIMATE / UNKNOWN
+10. write_report — this MUST be your final action
 
 Verdict guidance:
 - PHISHING: clear indicators of malicious intent (failed auth + suspicious URLs, known bad IP, malicious attachment, impersonation)
@@ -697,6 +975,8 @@ The report MUST include:
 - Sender Analysis (From vs Reply-To mismatch, domain age, IP reputation)
 - URL Analysis (all URLs checked with verdict per URL)
 - Attachment Analysis (if present)
+- Threat Intelligence Correlation (Shodan/AbuseIPDB/GreyNoise/urlscan/ThreatFox/MISP signals;
+  note which sources were unconfigured/skipped)
 - Content Analysis (urgency language, credential harvesting patterns)
 - IOCs (all extracted indicators)
 - Recommended Actions for the security team
@@ -826,11 +1106,12 @@ Begin the investigation now. Start by searching for the phishing investigation s
         if final_result:
             break
 
-    # Save report to disk
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = REPORTS_DIR / f"{report_id}.md"
+    # Save report via the shared blob store (local FS by default, S3 in prod)
+    report_path = f"phishing/{report_id}.md"
     if final_result and final_result.get("report_markdown"):
-        report_path.write_text(final_result["report_markdown"], encoding="utf-8")
+        import store
+        report_path = store.save_blob("phishing", f"{report_id}.md",
+                                      final_result["report_markdown"])
 
     result = {
         "report_id":         report_id,
@@ -850,6 +1131,26 @@ Begin the investigation now. Start by searching for the phishing investigation s
 
     _RESULTS[report_id] = result
     print(f"\n[phishing] {report_id} complete — verdict: {result['verdict']} ({result['confidence']}%)", flush=True)
+
+    # Optional: pivot from a confirmed phish to a tenant-wide victim hunt.
+    # Opt-in (PHANTOM_AUTO_VICTIM_HUNT) and always report-only — containment
+    # (mailbox purge / forwarding removal) stays a human-authorized action.
+    # Best-effort: a missing Google client or config never breaks triage.
+    if (final_result and result["verdict"] == "PHISHING"
+            and os.environ.get("PHANTOM_AUTO_VICTIM_HUNT", "").lower() in ("1", "true", "yes")):
+        try:
+            from gworkspace_hunt import hunt_from_phishing_result
+            hunt = hunt_from_phishing_result(result, remediate=False)
+            result["victim_hunt"] = {
+                "hunt_id": hunt.get("hunt_id"),
+                "scanned_users": hunt.get("scanned_users"),
+                "affected_count": hunt.get("affected_count"),
+                "forwarding_findings": len(hunt.get("forwarding_findings", [])),
+                "error": hunt.get("error"),
+            }
+            print(f"[phishing] victim hunt: {result['victim_hunt']}", flush=True)
+        except Exception as e:  # noqa: BLE001 — never let hunting break triage
+            result["victim_hunt"] = {"error": str(e)}
 
     # Send notifications — reporter confirmation email + team report
     notification_status = notify_all(result)

@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -44,6 +44,11 @@ from main import (
     save_session, load_session, list_sessions, _serialize_messages,
 )
 from phishing import investigate_phishing, get_result, list_results
+from phishingbox_intake import normalize_webhook, run_pipeline
+from guardduty_intake import normalize_eventbridge, run_pipeline as run_guardduty_pipeline
+from task_agent import list_task_types, run_task
+import auth
+import jobs
 
 # ---------------------------------------------------------------------------
 # App
@@ -220,10 +225,56 @@ async def approvals_page(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Auth dependency (used by every gated route below)
+# ---------------------------------------------------------------------------
+def _request_token(request: Request, authorization: str | None) -> str | None:
+    """Resolve a bearer token from the header, an add-in header, a cookie, or a
+    query param — so webhooks (Authorization), browser JS (cookie/X-Phantom-Token),
+    and email add-ins all have a path. Returns an 'authorization'-style string."""
+    if authorization:
+        return authorization
+    xt = request.headers.get("x-phantom-token")
+    if xt:
+        return f"Bearer {xt}"
+    ck = request.cookies.get("phantom_token")
+    if ck:
+        return f"Bearer {ck}"
+    qp = request.query_params.get("token")
+    if qp:
+        return f"Bearer {qp}"
+    return None
+
+
+def get_principal(request: Request,
+                  authorization: str | None = Header(default=None)) -> auth.Principal:
+    """FastAPI dependency: resolve the caller, or 401/403/503 via HTTPException."""
+    try:
+        return auth.authenticate(_request_token(request, authorization))
+    except auth.AuthError as e:
+        auth.audit("auth_failure", None, status=e.status, detail=e.detail,
+                   source_ip=(request.client.host if request.client else None),
+                   path=request.url.path)
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+def require_perm(principal: auth.Principal, action: str, request: Request) -> None:
+    """Enforce a non-task permission (chat, phishing:report, ...), audit denials."""
+    try:
+        auth.require(principal, action)
+    except auth.AuthError as e:
+        auth.audit("perm_denied", principal, permission=action, detail=e.detail,
+                   source_ip=(request.client.host if request.client else None),
+                   path=request.url.path)
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+# ---------------------------------------------------------------------------
 # API routes
 # ---------------------------------------------------------------------------
 @app.post("/api/chat")
-async def api_chat(req: ChatRequest):
+async def api_chat(req: ChatRequest, request: Request,
+                   principal: auth.Principal = Depends(get_principal)):
+    require_perm(principal, "chat", request)
     session = _get_session(req.session_id, req.mode)
     session["mode"] = req.mode
 
@@ -246,12 +297,15 @@ async def api_chat(req: ChatRequest):
 
 
 @app.get("/api/sessions")
-async def api_sessions():
+async def api_sessions(request: Request, principal: auth.Principal = Depends(get_principal)):
+    require_perm(principal, "chat", request)
     return JSONResponse({"sessions": list_sessions()})
 
 
 @app.post("/api/sessions/{name}/save")
-async def api_save(name: str, request: Request):
+async def api_save(name: str, request: Request,
+                   principal: auth.Principal = Depends(get_principal)):
+    require_perm(principal, "chat", request)
     body = await request.json()
     s = _sessions.get(body.get("session_id",""), {})
     path = save_session(s.get("messages",[]), s.get("mode","general"), name)
@@ -259,7 +313,9 @@ async def api_save(name: str, request: Request):
 
 
 @app.post("/api/sessions/{name}/load")
-async def api_load(name: str):
+async def api_load(name: str, request: Request,
+                   principal: auth.Principal = Depends(get_principal)):
+    require_perm(principal, "chat", request)
     result = load_session(name)
     if result is None:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -270,15 +326,19 @@ async def api_load(name: str):
 
 
 @app.get("/api/approvals")
-async def api_approvals(status: str | None = Query(None)):
+async def api_approvals(request: Request, status: str | None = Query(None),
+                        principal: auth.Principal = Depends(get_principal)):
+    require_perm(principal, "approvals:read", request)
     return JSONResponse({"approvals": list_approvals(status=status), "pending_count": pending_count()})
 
 
 @app.post("/api/approvals/{aid}/decide")
-async def api_decide(aid: str, request: Request):
+async def api_decide(aid: str, request: Request,
+                     principal: auth.Principal = Depends(get_principal)):
+    require_perm(principal, "approvals:decide", request)
     body = await request.json()
     decision   = body.get("decision")
-    decided_by = body.get("decided_by", "web-ui")
+    decided_by = body.get("decided_by") or principal.username
     if decision not in ("approved", "denied"):
         return JSONResponse({"error": "decision must be approved or denied"}, status_code=400)
     a = decide_approval(aid, decision, decided_by)
@@ -323,12 +383,16 @@ class PhishingRequest(BaseModel):
 
 
 @app.post("/api/investigate/phishing")
-async def api_investigate_phishing(req: PhishingRequest):
+async def api_investigate_phishing(req: PhishingRequest, request: Request,
+                                   principal: auth.Principal = Depends(get_principal)):
     """
     Accept a raw email and run autonomous phishing investigation.
     Blocks until investigation completes (typically 30–90 seconds).
     Called by the AWS Lambda function after SES delivers an email to S3.
     """
+    require_perm(principal, "phishing:report", request)
+    auth.audit("phishing_investigate", principal, reported_by=req.reported_by,
+               source_ip=(request.client.host if request.client else None))
     result = await asyncio.to_thread(
         investigate_phishing,
         req.raw_email,
@@ -343,14 +407,18 @@ async def api_investigate_phishing(req: PhishingRequest):
 
 
 @app.get("/api/investigate/phishing")
-async def api_list_investigations(limit: int = Query(default=50, le=200)):
+async def api_list_investigations(request: Request, limit: int = Query(default=50, le=200),
+                                  principal: auth.Principal = Depends(get_principal)):
     """List recent phishing investigations (no report bodies)."""
+    require_perm(principal, "phishing:read", request)
     return JSONResponse({"investigations": list_results(limit)})
 
 
 @app.get("/api/investigate/phishing/{report_id}")
-async def api_get_investigation(report_id: str):
+async def api_get_investigation(report_id: str, request: Request,
+                                principal: auth.Principal = Depends(get_principal)):
     """Get full investigation result including the Markdown report."""
+    require_perm(principal, "phishing:read", request)
     result = get_result(report_id)
     if result is None:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -358,8 +426,10 @@ async def api_get_investigation(report_id: str):
 
 
 @app.get("/api/investigate/phishing/{report_id}/report")
-async def api_get_report_markdown(report_id: str):
+async def api_get_report_markdown(report_id: str, request: Request,
+                                  principal: auth.Principal = Depends(get_principal)):
     """Return the raw Markdown investigation report."""
+    require_perm(principal, "phishing:read", request)
     result = get_result(report_id)
     if result is None:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -381,9 +451,9 @@ async def api_get_report_markdown(report_id: str):
 import base64 as _base64
 import hashlib as _hashlib
 
-# Background investigation status store (report_id → "investigating" | verdict)
-_WEBHOOK_STATUS: dict[str, str] = {}
-# Deduplication: content hash → report_id (prevents re-investigating same email)
+# Deduplication: dedup key → job_id (best-effort; avoids re-investigating the
+# same email submitted from multiple clients at once). Per-process — for strict
+# cross-container dedup, back this with Redis.
 _SEEN_HASHES: dict[str, str] = {}
 
 
@@ -440,17 +510,9 @@ def _normalise_email(req: KillPhishRequest) -> str:
     return "\r\n".join(lines)
 
 
-async def _investigate_in_background(raw_email: str, reported_by: str, report_id: str):
-    """Run investigation in a background thread; update status when done."""
-    try:
-        result = await asyncio.to_thread(investigate_phishing, raw_email, reported_by, report_id)
-        _WEBHOOK_STATUS[report_id] = result.get("verdict", "complete")
-    except Exception as e:
-        _WEBHOOK_STATUS[report_id] = f"error: {e}"
-
-
 @app.post("/api/webhook/phishing-report")
-async def api_killphish_webhook(req: KillPhishRequest):
+async def api_killphish_webhook(req: KillPhishRequest, request: Request,
+                                principal: auth.Principal = Depends(get_principal)):
     """
     Universal Kill Phish webhook — called by Gmail add-on, Outlook add-in,
     or any email security tool. Returns immediately; investigation runs async.
@@ -458,7 +520,11 @@ async def api_killphish_webhook(req: KillPhishRequest):
     Accepts raw EML, base64-encoded EML, or structured JSON fields.
     Deduplicates by Message-ID and content hash to avoid re-investigating
     the same email submitted from multiple clients simultaneously.
+
+    Auth: caller needs the 'phishing:report' permission (e.g. a service token
+    with role 'service-phishing'). Add-ins send it via Authorization/X-Phantom-Token.
     """
+    require_perm(principal, "phishing:report", request)
     raw_email = _normalise_email(req)
     if not raw_email.strip():
         return JSONResponse({"error": "No email content provided."}, status_code=400)
@@ -470,41 +536,258 @@ async def api_killphish_webhook(req: KillPhishRequest):
 
     if dedup_key in _SEEN_HASHES:
         existing_id = _SEEN_HASHES[dedup_key]
+        existing = jobs.get_job(existing_id)
         return JSONResponse({
-            "report_id":   existing_id,
-            "status":      _WEBHOOK_STATUS.get(existing_id, "investigating"),
+            "report_id":    existing_id,
+            "status":       existing["status"] if existing else "queued",
             "deduplicated": True,
-            "message":     "This email was already reported. Check your inbox for results.",
-            "status_url":  f"/api/webhook/phishing-report/{existing_id}",
+            "message":      "This email was already reported. Check your inbox for results.",
+            "status_url":   f"/api/webhook/phishing-report/{existing_id}",
         })
 
-    # Generate report ID
-    report_id = req.report_id or f"phi-{uuid.uuid4().hex[:10]}"
-    _SEEN_HASHES[dedup_key] = report_id
-    _WEBHOOK_STATUS[report_id] = "investigating"
-
-    # Fire investigation in background — do not await
-    asyncio.create_task(
-        _investigate_in_background(raw_email, req.reported_by, report_id)
-    )
-
+    # Enqueue triage (worker runs investigate_phishing) — do not run in-process.
+    job_id = jobs.enqueue("phishing_investigate",
+                          {"raw_email": raw_email, "reported_by": req.reported_by},
+                          owner=principal.username)
+    _SEEN_HASHES[dedup_key] = job_id
+    auth.audit("phishing_report", principal, job_id=job_id, source=req.source,
+               reported_by=req.reported_by,
+               source_ip=(request.client.host if request.client else None))
     return JSONResponse({
-        "report_id":  report_id,
-        "status":     "investigating",
+        "report_id":  job_id,
+        "status":     "queued",
         "source":     req.source,
         "message":    "Received. Phantom is investigating — we'll email you the verdict.",
-        "status_url": f"/api/webhook/phishing-report/{report_id}",
+        "status_url": f"/api/webhook/phishing-report/{job_id}",
     })
 
 
 @app.get("/api/webhook/phishing-report/{report_id}")
-async def api_killphish_status(report_id: str):
+async def api_killphish_status(report_id: str, request: Request,
+                               principal: auth.Principal = Depends(get_principal)):
     """Poll investigation status. Used by add-ins that want to show live results."""
-    status = _WEBHOOK_STATUS.get(report_id)
-    if status is None:
+    require_perm(principal, "phishing:read", request)
+    job = jobs.get_job(report_id)
+    if not job or job.get("kind") != "phishing_investigate":
         return JSONResponse({"error": "not found"}, status_code=404)
-    result = get_result(report_id)
-    if result:
+    result = job.get("result")
+    if job["status"] in ("complete", "error") and isinstance(result, dict):
         slim = {k: v for k, v in result.items() if k != "report_markdown"}
-        return JSONResponse({"status": "complete", "result": slim})
-    return JSONResponse({"status": status, "report_id": report_id})
+        return JSONResponse({"status": job["status"], "result": slim})
+    return JSONResponse({"status": job["status"], "report_id": report_id})
+
+
+# ---------------------------------------------------------------------------
+# PhishingBox intake — full IR pipeline (investigate → correlate → case → hunt).
+# Enqueued to a worker (jobs.py), not run in the API process.
+# ---------------------------------------------------------------------------
+@app.post("/api/webhook/phishingbox")
+async def api_phishingbox_webhook(request: Request,
+                                  principal: auth.Principal = Depends(get_principal)):
+    """PhishingBox report-a-phish webhook. Accepts PhishingBox's (or any) JSON
+    payload, extracts the reported email, and enqueues the full IR pipeline —
+    investigate, campaign-correlate, open a TheHive/MISP/Jira case, and (if
+    enabled) hunt Google Workspace for other victims. Returns immediately.
+
+    Auth: requires 'phishing:report' (configure PhishingBox to send a service
+    token in the Authorization header)."""
+    require_perm(principal, "phishing:report", request)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+    item = normalize_webhook(payload)
+    if not item:
+        return JSONResponse(
+            {"error": "no reported email found in payload",
+             "hint": "expected one of: raw_email/rfc822/eml/message/email (base64 ok)"},
+            status_code=422)
+
+    job_id = jobs.enqueue("phishing_pipeline",
+                          {"raw_email": item["raw_email"], "reporter": item["reporter"],
+                           "source": item["source"]},
+                          owner=principal.username)
+    auth.audit("phishingbox_report", principal, job_id=job_id, source=item["source"],
+               source_ip=(request.client.host if request.client else None))
+    return JSONResponse({
+        "report_id": job_id, "status": "queued", "source": item["source"],
+        "message": "Received. Phantom is running the phishing IR pipeline.",
+        "status_url": f"/api/webhook/phishingbox/{job_id}",
+    })
+
+
+@app.get("/api/webhook/phishingbox/{report_id}")
+async def api_phishingbox_status(report_id: str, request: Request,
+                                 principal: auth.Principal = Depends(get_principal)):
+    """Poll the pipeline result (verdict, campaign, case refs, victim-hunt)."""
+    require_perm(principal, "phishing:read", request)
+    job = jobs.get_job(report_id)
+    if not job or job.get("kind") != "phishing_pipeline":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if job["status"] in ("complete", "error"):
+        return JSONResponse({"status": job["status"], "result": job.get("result")})
+    return JSONResponse({"status": job["status"], "report_id": report_id})
+
+
+# ---------------------------------------------------------------------------
+# GuardDuty intake — EventBridge posts a finding; Phantom runs the cloud IR
+# pipeline (investigate → enrich → CloudTrail → case → approval-gated containment).
+# The work is ENQUEUED (jobs.py) and executed by a worker, not run in-process.
+# ---------------------------------------------------------------------------
+@app.post("/api/webhook/guardduty")
+async def api_guardduty_webhook(request: Request,
+                                principal: auth.Principal = Depends(get_principal)):
+    """AWS GuardDuty webhook (EventBridge → API Destination / Lambda). Accepts the
+    EventBridge event (finding under 'detail') or a bare finding, enqueues the
+    cloud IR pipeline, and returns immediately. Requires 'guardduty:report'."""
+    require_perm(principal, "guardduty:report", request)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    norm = normalize_eventbridge(payload)
+    if not norm:
+        return JSONResponse({"error": "no GuardDuty finding in payload",
+                             "hint": "expected an EventBridge event with a 'detail' finding"},
+                            status_code=422)
+    raw_finding = payload.get("detail", payload)  # pass the raw finding to the pipeline
+    job_id = jobs.enqueue("guardduty", {"finding": raw_finding, "source": "eventbridge"},
+                          owner=principal.username)
+    auth.audit("guardduty_submit", principal, job_id=job_id,
+               finding_type=norm.get("type"), severity=norm.get("severity"),
+               source_ip=(request.client.host if request.client else None))
+    return JSONResponse({"report_id": job_id, "status": "queued",
+                         "finding_type": norm.get("type"),
+                         "status_url": f"/api/webhook/guardduty/{job_id}"})
+
+
+@app.get("/api/webhook/guardduty/{report_id}")
+async def api_guardduty_status(report_id: str, request: Request,
+                               principal: auth.Principal = Depends(get_principal)):
+    """Poll the GuardDuty pipeline result (verdict, case refs, containment approvals)."""
+    require_perm(principal, "guardduty:read", request)
+    job = jobs.get_job(report_id)
+    if not job or job.get("kind") != "guardduty":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if job["status"] in ("complete", "error"):
+        return JSONResponse({"status": job["status"], "result": job.get("result")})
+    return JSONResponse({"status": job["status"], "report_id": report_id})
+
+
+# ---------------------------------------------------------------------------
+# Task control plane — assign any registered task type (detection engineering,
+# threat intel, DFIR, cloud posture, ...) and poll for the result.
+# Access is gated by phantom/auth.py: callers present `Authorization: Bearer
+# <token>`, roles grant task types, reads are scoped to the caller's own tasks
+# unless their role has can_read_all, and every action is written to the audit
+# log. Secure by default — unconfigured auth refuses these routes (503) unless
+# PHANTOM_AUTH_ALLOW_ANONYMOUS=1 (read-only). See auth.py for setup.
+# ---------------------------------------------------------------------------
+class TaskRequest(BaseModel):
+    task_type: str                       # e.g. "detection-engineering", "threat-intelligence", "dfir-forensics"
+    objective: str                       # what to do, in plain language
+    technique: str = ""                  # detection-engineering: ATT&CK id (optional)
+    indicators: list | None = None       # threat-intelligence: [["ip","1.2.3.4"], ...] (optional)
+    context: str = ""                    # any extra context for the agent
+
+
+def _task_job(task_id: str, principal: auth.Principal):
+    """Fetch a 'task'-kind job and enforce ownership; returns (job, error_response)."""
+    job = jobs.get_job(task_id)
+    if not job or job.get("kind") != "task":
+        return None, JSONResponse({"error": "not found"}, status_code=404)
+    if not (auth.can_read_all(principal) or job.get("owner") == principal.username):
+        raise HTTPException(status_code=403, detail="not your task")
+    return job, None
+
+
+@app.get("/api/tasks/types")
+async def api_task_types(principal: auth.Principal = Depends(get_principal)):
+    """List task types, annotated with whether THIS caller may submit each."""
+    types = list_task_types()
+    for t in types:
+        t["allowed"] = auth.can_submit(principal, t["name"])
+    return JSONResponse({"task_types": types, "you": {"username": principal.username,
+                         "roles": principal.roles, "can_read_all": auth.can_read_all(principal)}})
+
+
+@app.post("/api/tasks")
+async def api_submit_task(req: TaskRequest, request: Request,
+                          principal: auth.Principal = Depends(get_principal)):
+    """Assign a task. Requires a role that grants this task type. Enqueued to a worker."""
+    known = {t["name"] for t in list_task_types()}
+    if req.task_type not in known:
+        return JSONResponse({"error": f"unknown task_type '{req.task_type}'",
+                             "available": sorted(known)}, status_code=422)
+    if not req.objective.strip():
+        return JSONResponse({"error": "objective is required"}, status_code=400)
+    try:
+        auth.require_submit(principal, req.task_type)
+    except auth.AuthError as e:
+        auth.audit("task_denied", principal, task_type=req.task_type, detail=e.detail,
+                   source_ip=(request.client.host if request.client else None))
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+    kwargs = {"context": req.context}
+    if req.technique:
+        kwargs["technique"] = req.technique
+    if req.indicators:
+        kwargs["indicators"] = req.indicators
+    job_id = jobs.enqueue("task",
+                          {"task_type": req.task_type, "objective": req.objective, "kwargs": kwargs},
+                          owner=principal.username)
+    auth.audit("task_submit", principal, job_id=job_id, task_type=req.task_type,
+               objective=req.objective[:200],
+               source_ip=(request.client.host if request.client else None))
+    return JSONResponse({"task_id": job_id, "task_type": req.task_type, "status": "queued",
+                         "assigned_by": principal.username, "status_url": f"/api/tasks/{job_id}"})
+
+
+@app.get("/api/tasks")
+async def api_list_tasks(principal: auth.Principal = Depends(get_principal)):
+    """List assigned tasks — all of them for can_read_all roles, else only your own."""
+    owner = None if auth.can_read_all(principal) else principal.username
+    tasks = [{"task_id": j["job_id"], "status": j["status"], "owner": j.get("owner"),
+              "task_type": (j.get("payload") or {}).get("task_type")}
+             for j in jobs.list_jobs(owner=owner) if j.get("kind") == "task"]
+    return JSONResponse({"tasks": tasks[:100]})
+
+
+@app.get("/api/tasks/{task_id}")
+async def api_task_status(task_id: str, principal: auth.Principal = Depends(get_principal)):
+    """Poll a task's status/result. You can only read your own tasks unless can_read_all."""
+    job, err = _task_job(task_id, principal)
+    if err:
+        return err
+    result = job.get("result")
+    if job["status"] in ("complete", "error") and isinstance(result, dict):
+        slim = {k: v for k, v in result.items() if k != "report_markdown"}
+        return JSONResponse({"status": job["status"], "result": slim})
+    return JSONResponse({"status": job["status"], "task_id": task_id})
+
+
+@app.get("/api/tasks/{task_id}/report")
+async def api_task_report(task_id: str, principal: auth.Principal = Depends(get_principal)):
+    """Fetch the full Markdown report. Ownership-scoped like the status route."""
+    job, err = _task_job(task_id, principal)
+    if err:
+        return err
+    result = job.get("result")
+    if not isinstance(result, dict):
+        return JSONResponse({"error": "still running"}, status_code=409)
+    md = result.get("report_markdown", "")
+    if not md:
+        return JSONResponse({"error": "no report produced", "result": {
+            k: v for k, v in result.items() if k != "report_markdown"}}, status_code=200)
+    return HTMLResponse(f"<pre>{_html_escape(md)}</pre>")
+
+
+@app.get("/api/queue/health")
+async def api_queue_health(principal: auth.Principal = Depends(get_principal)):
+    """Report the active queue backend (local vs redis) — useful post-deploy."""
+    return JSONResponse({"backend": jobs.backend_kind()})
+
+
+def _html_escape(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))

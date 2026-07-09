@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Approval store and Google Chat notifications for Phantom IR workflow."""
+"""Approval store and Google Chat notifications for Phantom IR workflow.
+
+Approvals persist in the shared store (phantom/store.py): a local SQLite file by
+default, Postgres when PHANTOM_DB_URL is set — so the API container that files an
+approval and the one that serves the decide-link see the same record.
+"""
 import hashlib
 import hmac as _hmac
-import json
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 try:
     import httpx
@@ -14,9 +17,8 @@ try:
 except ImportError:
     _HTTPX = False
 
-_DATA_DIR = Path(__file__).parent / "data"
-_DATA_DIR.mkdir(exist_ok=True)
-_APPROVALS_FILE = _DATA_DIR / "approvals.json"
+import store
+from store import Approval
 
 APPROVAL_EXPIRY_MINUTES = int(os.environ.get("APPROVAL_EXPIRY_MINUTES", "30"))
 PHANTOM_BASE_URL = os.environ.get("PHANTOM_BASE_URL", "http://localhost:8080")
@@ -24,15 +26,19 @@ GOOGLE_CHAT_WEBHOOK_URL = os.environ.get("GOOGLE_CHAT_WEBHOOK_URL", "")
 _SECRET = os.environ.get("APPROVAL_HMAC_SECRET", "phantom-change-in-production").encode()
 
 
-def _load() -> dict:
-    try:
-        return json.loads(_APPROVALS_FILE.read_text()) if _APPROVALS_FILE.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        return {}
+def _iso(dt):
+    return dt.isoformat() if dt else None
 
 
-def _dump(data: dict) -> None:
-    _APPROVALS_FILE.write_text(json.dumps(data, indent=2, default=str))
+def _to_dict(a: Approval) -> dict:
+    """Serialize to the same shape the file store returned (ISO date strings)."""
+    return {
+        "id": a.id, "session_id": a.session_id, "action_type": a.action_type,
+        "resources": store.loads(a.resources, []), "justification": a.justification,
+        "impact": a.impact, "impact_level": a.impact_level, "requested_by": a.requested_by,
+        "requested_at": _iso(a.requested_at), "expires_at": _iso(a.expires_at),
+        "status": a.status, "decided_by": a.decided_by, "decided_at": _iso(a.decided_at),
+    }
 
 
 def _token(approval_id: str, decision: str) -> str:
@@ -55,52 +61,64 @@ def create_approval(
 ) -> dict:
     now = datetime.now(timezone.utc)
     aid = f"apr-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    approval = {
-        "id": aid,
-        "session_id": session_id,
-        "action_type": action_type,
-        "resources": resources,
-        "justification": justification,
-        "impact": impact,
-        "impact_level": impact_level,
-        "requested_by": requested_by,
-        "requested_at": now.isoformat(),
-        "expires_at": (now + timedelta(minutes=APPROVAL_EXPIRY_MINUTES)).isoformat(),
-        "status": "pending",
-        "decided_by": None,
-        "decided_at": None,
-    }
-    store = _load()
-    store[aid] = approval
-    _dump(store)
-    return approval
+    s = store.session()
+    try:
+        row = Approval(
+            id=aid, session_id=session_id, action_type=action_type,
+            resources=store.dumps(resources), justification=justification,
+            impact=impact, impact_level=impact_level, requested_by=requested_by,
+            requested_at=now, expires_at=now + timedelta(minutes=APPROVAL_EXPIRY_MINUTES),
+            status="pending", decided_by=None, decided_at=None)
+        s.add(row)
+        s.commit()
+        return _to_dict(row)
+    finally:
+        s.close()
 
 
 def get_approval(approval_id: str) -> dict | None:
-    return _load().get(approval_id)
+    s = store.session()
+    try:
+        a = s.get(Approval, approval_id)
+        return _to_dict(a) if a else None
+    finally:
+        s.close()
 
 
 def decide_approval(approval_id: str, decision: str, decided_by: str) -> dict | None:
-    store = _load()
-    a = store.get(approval_id)
-    if not a or a["status"] != "pending":
-        return a
-    a["status"] = decision
-    a["decided_by"] = decided_by
-    a["decided_at"] = datetime.now(timezone.utc).isoformat()
-    _dump(store)
-    return a
+    s = store.session()
+    try:
+        a = s.get(Approval, approval_id)
+        if not a:
+            return None
+        if a.status != "pending":
+            return _to_dict(a)
+        a.status = decision
+        a.decided_by = decided_by
+        a.decided_at = datetime.now(timezone.utc)
+        s.commit()
+        return _to_dict(a)
+    finally:
+        s.close()
 
 
 def list_approvals(status: str | None = None) -> list:
-    items = list(_load().values())
-    if status:
-        items = [a for a in items if a["status"] == status]
-    return sorted(items, key=lambda a: a["requested_at"], reverse=True)
+    s = store.session()
+    try:
+        q = s.query(Approval)
+        if status:
+            q = q.filter(Approval.status == status)
+        return [_to_dict(a) for a in q.order_by(Approval.requested_at.desc()).all()]
+    finally:
+        s.close()
 
 
 def pending_count() -> int:
-    return sum(1 for a in _load().values() if a["status"] == "pending")
+    s = store.session()
+    try:
+        return s.query(Approval).filter(Approval.status == "pending").count()
+    finally:
+        s.close()
 
 
 def send_google_chat_notification(approval: dict) -> bool:
