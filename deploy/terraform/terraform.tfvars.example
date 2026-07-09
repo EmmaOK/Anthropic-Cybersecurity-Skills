@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars and fill in. Keep secrets out of version control
+# (this file is an example; real tfvars with secrets should be gitignored or
+# supplied via TF_VAR_* env / a secrets backend).
+
+region      = "us-east-1"
+environment = "prod"
+name        = "phantom"
+
+# Lock the ALB down to your VPN/office egress; webhooks arrive in-AWS.
+allowed_cidrs = ["203.0.113.0/24"]
+
+# HTTPS: an ACM cert in the same region for your domain (leave "" for HTTP dev only).
+certificate_arn = ""
+
+# Image tag you pushed to the created ECR repo.
+image_tag = "v1"
+
+# --- Secrets (prefer TF_VAR_anthropic_api_key env over putting them here) ---
+anthropic_api_key   = "sk-ant-..."
+phantom_admin_token = "generate-with: python phantom/auth.py gen-token"
+
+extra_secrets = {
+  # VIRUSTOTAL_API_KEY = "..."
+  # SHODAN_API_KEY     = "..."
+  # THEHIVE_URL        = "https://hive.corp"    # non-secret, but injected the same way
+  # THEHIVE_API_KEY    = "..."
+  # MISP_URL           = "https://misp.corp"
+  # MISP_API_KEY       = "..."
+}
+
+# --- Sizing (bump for prod) ---
+worker_desired = 2
+worker_max     = 10

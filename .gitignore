@@ -87,3 +87,6 @@ terraform.tfvars
 
 # Phantom local venv (SDK spike runtime)
 phantom/.venv/
+
+# Phantom local state DB (use Postgres in prod via PHANTOM_DB_URL)
+phantom/data/

@@ -1,0 +1,79 @@
+# Phantom pilot stack — the API/worker/queue split on one host.
+#
+#   api     — FastAPI control plane (chat, tasks, webhooks, approvals). Enqueues work.
+#   worker  — dequeues and runs the long agent jobs (scale with `--scale worker=N`).
+#   redis   — the shared job queue + result store.
+#
+# Usage:
+#   export ANTHROPIC_API_KEY=sk-...
+#   python phantom/auth.py init-file deploy/config/auth.json   # first-run tokens
+#   docker compose -f deploy/docker-compose.yml up --build --scale worker=2
+#
+# State is externalized (store.py): campaigns/approvals/audit → Postgres, job
+# queue → Redis, reports → a shared volume (set PHANTOM_REPORTS_BUCKET for S3 in
+# prod). Any api/worker container can serve any request — the truth is in the
+# services, not on a container's disk. This is the shape that scales to Fargate.
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=phantom
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-phantom-change-me}
+      - POSTGRES_DB=phantom
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command: uvicorn phantom.server:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      - PHANTOM_QUEUE_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+      - PHANTOM_DB_URL=postgresql+psycopg://phantom:${POSTGRES_PASSWORD:-phantom-change-me}@postgres:5432/phantom
+      # - PHANTOM_REPORTS_BUCKET=my-phantom-reports   # uncomment for S3 (else shared volume)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY}
+      - PHANTOM_AUTH_FILE=/config/auth.json
+      # add integration keys as needed: VIRUSTOTAL_API_KEY, SHODAN_API_KEY,
+      # THEHIVE_URL/THEHIVE_API_KEY, MISP_URL/MISP_API_KEY, JIRA_*, GOOGLE_* ...
+    volumes:
+      - ./config:/config:ro
+      - phantom-reports:/app/reports
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command: python phantom/worker.py
+    environment:
+      - PHANTOM_QUEUE_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+      - PHANTOM_DB_URL=postgresql+psycopg://phantom:${POSTGRES_PASSWORD:-phantom-change-me}@postgres:5432/phantom
+      # - PHANTOM_REPORTS_BUCKET=my-phantom-reports
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY}
+      # workers that CONTAIN in AWS need a narrowly-scoped role/creds here.
+    volumes:
+      - phantom-reports:/app/reports
+    depends_on:
+      - redis
+      - postgres
+
+volumes:
+  redis-data:
+  postgres-data:
+  phantom-reports:
