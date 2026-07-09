@@ -1,5 +1,9 @@
 # Phantom on AWS Fargate — Terraform
 
+**This is the canonical Phantom deployment.** It supersedes the older
+`infra/phantom-mcp/` stack (MCP server + Kali). To cut over from a previous
+deployment while keeping the Kali offensive plane, follow **[`../OVERRIDE.md`](../OVERRIDE.md)**.
+
 A starting Terraform layout for the API/worker/queue/state architecture. It maps
 1:1 onto the app: `phantom/server.py` (API), `phantom/worker.py` (worker),
 `jobs.py` (Redis queue), `store.py` (Postgres + S3).
