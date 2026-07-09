@@ -283,6 +283,51 @@ def _tool_jira(finding_id: str, summary: str, description: str) -> dict:
         return {"enabled": False, "error": str(e)}
 
 
+def _cwe_int(cwe) -> int | None:
+    import re
+    m = re.search(r"(\d+)", str(cwe or ""))
+    return int(m.group(1)) if m else None
+
+
+def _tool_add_context(finding_id: str, summary: str, impact: str, cwe: str, owasp: str,
+                      remediation: str, references: list | None) -> dict:
+    """Enrich an under-documented TRUE-POSITIVE with an explanatory note + standards
+    references (CWE / OWASP). The note is added directly; setting the finding's
+    structured cwe/references fields is a gated write."""
+    refs = references or []
+    lines = ["[Phantom] Context & standards enrichment"]
+    if summary:
+        lines.append(f"Summary: {summary}")
+    if impact:
+        lines.append(f"Impact: {impact}")
+    if cwe:
+        lines.append(f"Weakness: {cwe}")
+    if owasp:
+        lines.append(f"OWASP: {owasp}")
+    if remediation:
+        lines.append(f"Remediation: {remediation}")
+    if refs:
+        lines.append("References:\n" + "\n".join(f"- {r}" for r in refs))
+    note_res = add_note(finding_id, "\n".join(lines))
+
+    structured = None
+    cwe_num = _cwe_int(cwe)
+    if cwe_num or refs:
+        fields = {}
+        if cwe_num:
+            fields["cwe"] = cwe_num
+        if refs:
+            fields["references"] = "\n".join(refs)
+
+        def _w():
+            update_finding(finding_id, fields)
+            return {"fields_set": list(fields)}
+        structured = _gated_write("dd-set-context", [f"finding:{finding_id}"],
+                                  f"Set CWE/references metadata: {cwe} {owasp}", _w)
+    return {"note_added": note_res.get("added"), "cwe": cwe, "owasp": owasp,
+            "structured_update": structured}
+
+
 # ── Tool schemas ─────────────────────────────────────────────────────────────
 
 T_LIST = {"name": "list_findings",
@@ -299,6 +344,23 @@ T_NOTE = {"name": "add_note", "description": "Add a note/comment to a finding (a
           "input_schema": {"type": "object", "properties": {
               "finding_id": {"type": "string"}, "note": {"type": "string"}},
               "required": ["finding_id", "note"]}}
+T_CONTEXT = {"name": "add_finding_context",
+             "description": "For a TRUE-POSITIVE that lacks proper context, add an explanatory note "
+                            "(what the vuln is, impact/exploitability, remediation) AND reference the "
+                            "applicable security standard: a CWE id (e.g. 'CWE-89'), an OWASP Top 10 "
+                            "category (e.g. 'A03:2021 - Injection'), and OWASP ASVS control where "
+                            "relevant. The note is added directly; setting the finding's structured "
+                            "cwe/references fields is gated. Use whenever a real finding is under-documented.",
+             "input_schema": {"type": "object", "properties": {
+                 "finding_id": {"type": "string"},
+                 "summary": {"type": "string", "description": "what the vulnerability is"},
+                 "impact": {"type": "string", "description": "exploitability / business impact"},
+                 "cwe": {"type": "string", "description": "e.g. 'CWE-79'"},
+                 "owasp": {"type": "string", "description": "e.g. 'A03:2021 - Injection'"},
+                 "remediation": {"type": "string"},
+                 "references": {"type": "array", "items": {"type": "string"},
+                                "description": "standard/URL references (CWE, OWASP cheat sheet, ...)"}},
+                 "required": ["finding_id", "summary", "cwe"]}}
 T_ARCHIVE = {"name": "archive_false_positive",
              "description": "Mark a finding as false-positive and archive it (sets false_p, deactivates, "
                             "adds a note). WRITE — gated (files approval unless writes enabled). Only for "
@@ -345,6 +407,10 @@ def _dispatch(name: str, inp: dict) -> tuple[str, dict | None]:
         return json.dumps(get_finding(inp.get("finding_id", ""))), None
     if name == "add_note":
         return json.dumps(add_note(inp.get("finding_id", ""), inp.get("note", ""))), None
+    if name == "add_finding_context":
+        return json.dumps(_tool_add_context(inp.get("finding_id", ""), inp.get("summary", ""),
+                          inp.get("impact", ""), inp.get("cwe", ""), inp.get("owasp", ""),
+                          inp.get("remediation", ""), inp.get("references"))), None
     if name == "archive_false_positive":
         return json.dumps(_tool_archive_fp(inp.get("finding_id", ""), inp.get("reason", ""))), None
     if name == "set_finding_status":
@@ -371,14 +437,25 @@ def _dispatch(name: str, inp: dict) -> tuple[str, dict | None]:
 _REPORT = generic_report_tool()
 _TASKS = {
     "defectdojo-triage": {
-        "tools": SKILL_TOOLS + [T_LIST, T_GET, T_ENRICH_CVE, T_NOTE, T_ARCHIVE, T_STATUS, T_JIRA, _REPORT],
+        "tools": SKILL_TOOLS + [T_LIST, T_GET, T_ENRICH_CVE, T_NOTE, T_CONTEXT, T_ARCHIVE, T_STATUS,
+                                T_JIRA, _REPORT],
         "subdir": "defectdojo-triage",
         "system": ("You are Phantom triaging DefectDojo findings. Pull the triaging-defectdojo-findings "
-                   "skill. For each finding: get_finding, enrich_cve on its CVE (KEV/EPSS). Decide FALSE-"
-                   "POSITIVE / DUPLICATE / RISK-ACCEPT / REAL with evidence. archive_false_positive clear "
-                   "FPs, set_finding_status for risk-accept/mitigate, and create_jira_ticket for real "
-                   "findings that need remediation. State changes are gated (approval unless writes "
-                   "enabled); notes and Jira tickets are direct. write_report with dispositions. " + _BASE_RULES)},
+                   "skill (and the relevant OWASP/CWE skill when mapping standards). For each finding: "
+                   "get_finding, enrich_cve on its CVE (KEV/EPSS). Decide FALSE-POSITIVE / DUPLICATE / "
+                   "RISK-ACCEPT / REAL with evidence.\n"
+                   "- Clear false positives → archive_false_positive.\n"
+                   "- TRUE POSITIVES: assess whether the finding has proper context (clear description, "
+                   "impact/exploitability, a CWE + OWASP mapping, and remediation). If it is "
+                   "under-documented, call add_finding_context to add the explanation AND reference the "
+                   "applicable standard — the CWE id, the OWASP Top 10 category, and an OWASP ASVS "
+                   "control / cheat-sheet URL. Map accurately from the finding type (e.g. SQLi → CWE-89, "
+                   "A03:2021 Injection; XSS → CWE-79, A03:2021; SSRF → CWE-918, A10:2021).\n"
+                   "- Then set_finding_status for risk-accept/mitigate and create_jira_ticket for real "
+                   "findings that need owner action.\n"
+                   "State changes (archive/status/CWE-metadata) are gated (approval unless writes "
+                   "enabled); notes and Jira tickets are direct. write_report with dispositions and the "
+                   "standards references added. " + _BASE_RULES)},
     "defectdojo-sla": {
         "tools": [T_SLA, T_LIST, T_GET, T_JIRA, _REPORT],
         "subdir": "defectdojo-sla",
