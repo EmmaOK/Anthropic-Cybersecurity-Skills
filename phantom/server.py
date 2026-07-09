@@ -198,6 +198,14 @@ class ChatRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Health check (ALB target group + Dockerfile HEALTHCHECK; unauthenticated)
+# ---------------------------------------------------------------------------
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
 # UI routes
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=RedirectResponse)
