@@ -141,24 +141,20 @@ def push_misp(result: dict, campaign: dict) -> dict:
 
 # ── Jira (optional) ──────────────────────────────────────────────────────────
 
-def push_jira(result: dict, campaign: dict) -> dict:
+def create_jira_issue(summary: str, description: str, issue_type: str = "") -> dict:
+    """Generic Jira issue creator — reusable by any Phantom task type (phishing
+    case-sync, DefectDojo remediation tickets, ...)."""
     url = os.environ.get("JIRA_URL", "").rstrip("/")
     user = os.environ.get("JIRA_USER", "")
     token = os.environ.get("JIRA_API_TOKEN", "")
     project = os.environ.get("JIRA_PROJECT_KEY", "")
     if not (url and user and token and project):
         return {"enabled": False, "reason": "JIRA_URL / JIRA_USER / JIRA_API_TOKEN / JIRA_PROJECT_KEY not set"}
-    cid = campaign.get("campaign_id", "")
-    iocs = result.get("iocs", {})
-    ioc_lines = "\n".join(f"- {k}: {v}" for k, v in _iter_iocs(iocs)) or "- (none)"
     fields = {"fields": {
         "project": {"key": project},
-        "summary": f"[Phishing] {result.get('subject', '')[:100]} ({cid})",
-        "description": (f"Phantom-investigated phishing campaign {cid}.\n"
-                        f"Verdict: {result.get('verdict')} ({result.get('confidence')}%)\n"
-                        f"Reports in campaign: {campaign.get('report_count', 1)}\n\n"
-                        f"IOCs:\n{ioc_lines}"),
-        "issuetype": {"name": os.environ.get("JIRA_ISSUE_TYPE", "Task")},
+        "summary": summary[:250],
+        "description": description,
+        "issuetype": {"name": issue_type or os.environ.get("JIRA_ISSUE_TYPE", "Task")},
     }}
     resp = http_json(f"{url}/rest/api/2/issue", method="POST", data=fields,
                      verify=VERIFY_TLS, auth=(user, token))
@@ -166,6 +162,16 @@ def push_jira(result: dict, campaign: dict) -> dict:
         return {"enabled": True, "created": False, "error": resp}
     return {"enabled": True, "created": True, "key": resp["key"],
             "url": f"{url}/browse/{resp['key']}"}
+
+
+def push_jira(result: dict, campaign: dict) -> dict:
+    cid = campaign.get("campaign_id", "")
+    ioc_lines = "\n".join(f"- {k}: {v}" for k, v in _iter_iocs(result.get("iocs", {}))) or "- (none)"
+    return create_jira_issue(
+        summary=f"[Phishing] {result.get('subject', '')[:100]} ({cid})",
+        description=(f"Phantom-investigated phishing campaign {cid}.\n"
+                     f"Verdict: {result.get('verdict')} ({result.get('confidence')}%)\n"
+                     f"Reports in campaign: {campaign.get('report_count', 1)}\n\nIOCs:\n{ioc_lines}"))
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────

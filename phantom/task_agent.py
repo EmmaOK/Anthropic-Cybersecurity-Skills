@@ -273,7 +273,7 @@ for _name, _summary, _hints in _SKILL_GUIDED:
 
 # Auto-register bespoke task types (they import task_agent, so import them last,
 # once this module's registry API is fully defined). Failures are non-fatal.
-for _mod in ("detection_engineering", "threat_intel"):
+for _mod in ("detection_engineering", "threat_intel", "securonix", "defectdojo", "devsecops"):
     try:
         __import__(_mod)
     except Exception as _e:  # noqa: BLE001
