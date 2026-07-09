@@ -1,2 +1,19 @@
 anthropic>=0.86.0
 httpx>=0.28.0
+
+# State storage (store.py). SQLAlchemy is required — it drives the local SQLite
+# file AND Postgres with the same code. Postgres/S3 backends are opt-in:
+sqlalchemy>=2.0
+# Optional — only when PHANTOM_DB_URL points at Postgres:
+# psycopg[binary]>=3.1
+# Optional — only when PHANTOM_REPORTS_BUCKET (S3) is set:
+# boto3>=1.34
+
+# Optional — Google Workspace campaign victim-hunt (gworkspace_hunt.py).
+# Only needed if you run the victim-hunt module; the rest of Phantom works without them.
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+
+# Optional — Redis-backed job queue (jobs.py) for the API/worker split in
+# production. Without it, the queue runs in-process (local backend), no Redis needed.
+redis>=5.0.0
