@@ -1,0 +1,110 @@
+name: Generate SBOM
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/requirements*.txt'
+      - '.github/scripts/generate_sbom.py'
+      - '.github/workflows/sbom.yml'
+  pull_request:
+    paths:
+      - '**/requirements*.txt'
+      - '.github/scripts/generate_sbom.py'
+      - '.github/workflows/sbom.yml'
+  release:
+    types: [published]
+  # Dependencies drift even when the manifests do not, so refresh weekly.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate CycloneDX SBOM
+        run: python3 .github/scripts/generate_sbom.py --output-dir sbom --spec-version 1.6
+
+      - name: Summarise
+        run: |
+          python3 << 'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          bom = json.loads(pathlib.Path("sbom/cyclonedx.json").read_text())
+          libs = [c for c in bom["components"] if c.get("type") == "library"]
+          apps = [c for c in bom["components"] if c.get("type") == "application"]
+          print("## CycloneDX SBOM\n")
+          print(f"- Spec version: `{bom['specVersion']}`")
+          print(f"- Serial: `{bom['serialNumber']}`")
+          print(f"- Components: **{len(libs)}** packages across "
+                f"**{len(apps)}** application(s)\n")
+          print("| Package | Version | License |")
+          print("| --- | --- | --- |")
+          for c in sorted(libs, key=lambda x: x["name"].lower()):
+              lic = ", ".join(
+                  l.get("license", {}).get("id")
+                  or l.get("license", {}).get("name")
+                  or l.get("expression", "")
+                  for l in c.get("licenses", [])
+              ) or "-"
+              print(f"| {c['name']} | {c.get('version', '-')} | {lic} |")
+          EOF
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom/*.json
+          if-no-files-found: error
+
+      # Every run mints a fresh timestamp and serial number. Without this the
+      # scheduled job would commit that churn weekly even when no dependency
+      # actually moved, so restore files whose package data is unchanged.
+      - name: Discard timestamp-only churn
+        if: github.event_name == 'push' || github.event_name == 'schedule'
+        run: |
+          python3 << 'EOF'
+          import json, pathlib, subprocess
+
+          def packages(text):
+              doc = json.loads(text)
+              doc.get("metadata", {}).pop("timestamp", None)
+              doc.pop("serialNumber", None)
+              return doc
+
+          for path in sorted(pathlib.Path("sbom").glob("*.json")):
+              previous = subprocess.run(["git", "show", f"HEAD:{path}"],
+                                        capture_output=True, text=True)
+              if previous.returncode != 0:
+                  continue  # new file, keep it
+              if packages(previous.stdout) == packages(path.read_text()):
+                  subprocess.run(["git", "checkout", "--", str(path)], check=True)
+                  print(f"unchanged: {path}")
+          EOF
+
+      # Keep the checked-in SBOM current, mirroring the index.json workflow.
+      - name: Commit refreshed SBOM
+        if: github.event_name == 'push' || github.event_name == 'schedule'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sbom/
+          git diff --staged --quiet || git commit -m "chore: auto-update CycloneDX SBOM"
+          git push
+
+      - name: Attach SBOM to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" sbom/*.json --clobber
